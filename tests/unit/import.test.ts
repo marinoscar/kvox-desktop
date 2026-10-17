@@ -49,11 +49,11 @@ async function importFixture(name: string): Promise<ImportOutcome> {
   return importLocalFile(join(FIXTURES, name), { connection, log: (line) => logged.push(line) });
 }
 
-async function waitForExtraction(objectId: string): Promise<{ status: string; characters?: number }> {
+async function waitForExtraction(objectId: string): Promise<{ status: string; characters: number | null }> {
   for (let attempt = 0; attempt < 120; attempt += 1) {
-    const object = await api<{ metadata?: { noteSourceExtraction?: { status: string; characters?: number } } }>(`/storage/objects/${objectId}`);
-    const extraction = object.metadata?.noteSourceExtraction;
-    if (extraction && extraction.status !== 'extracting') return extraction;
+    // The notes slice's own status route (owner-scoped, notes:read).
+    const extraction = await api<{ status: string; characters: number | null }>(`/notes/sources/documents/${objectId}`);
+    if (extraction.status !== 'extracting') return extraction;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`extraction of ${objectId} did not finish`);
