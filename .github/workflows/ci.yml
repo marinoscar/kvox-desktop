@@ -1,0 +1,136 @@
+# =============================================================================
+# CI: typecheck, unit tests, unsigned installers and the Electron smoke test,
+# on Windows, macOS (Apple silicon and Intel) and Ubuntu (marinoscar/kvox#582)
+# =============================================================================
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Install-time and tool telemetry off: this project sends nothing anywhere.
+  SCARF_ANALYTICS: 'false'
+  CHECKPOINT_DISABLE: '1'
+  PRISMA_HIDE_UPDATE_MESSAGE: '1'
+  # Unsigned builds: no certificate discovery.
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, macos-13, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Make sure the Electron binary is installed
+        run: node node_modules/electron/install.js
+
+      - name: Electron and its Node
+        shell: bash
+        run: |
+          ELECTRON_RUN_AS_NODE=1 npx electron -p "'Electron ' + process.versions.electron + ', Node ' + process.versions.node" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare the database layer
+        run: npm run prepare:db
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build the unsigned installers
+        run: npm run dist
+
+      - name: Installer sizes
+        shell: bash
+        run: |
+          echo "### Installers (${{ matrix.os }})" >> "$GITHUB_STEP_SUMMARY"
+          echo '| File | MB |' >> "$GITHUB_STEP_SUMMARY"
+          echo '|---|---|' >> "$GITHUB_STEP_SUMMARY"
+          for f in release/*.exe release/*.dmg release/*.AppImage release/*.deb; do
+            [ -f "$f" ] || continue
+            size=$(node -e "console.log((require('fs').statSync(process.argv[1]).size/1048576).toFixed(1))" "$f")
+            echo "| $(basename "$f") | $size |" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Locate the packaged app
+        id: app
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) exe="release/win-unpacked/KVox.exe" ;;
+            macOS)   exe="$(ls -d release/mac*/KVox.app | head -1)/Contents/MacOS/KVox" ;;
+            Linux)   exe="release/linux-unpacked/kvox-desktop" ;;
+          esac
+          test -f "$exe"
+          echo "executable=$PWD/$exe" >> "$GITHUB_OUTPUT"
+
+      # Ubuntu 24.04 forbids unprivileged user namespaces through AppArmor, which
+      # Chromium's sandbox needs; the deb/AppImage profile is D6 (#587).
+      - name: Allow the Chromium sandbox (Linux)
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Smoke test (packaged app)
+        shell: bash
+        env:
+          KVOX_E2E_EXECUTABLE: ${{ steps.app.outputs.executable }}
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a npx playwright test; else npx playwright test; fi
+
+      - name: Measurements
+        if: always()
+        shell: bash
+        run: |
+          if [ -f test-results/metrics.json ]; then
+            echo "### Smoke-test measurements (${{ matrix.os }})" >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat test-results/metrics.json | tee -a "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 14
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: error
+          retention-days: 7

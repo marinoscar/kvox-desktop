@@ -1,0 +1,19 @@
+{
+  // The main process, the preload script and the server utility process.
+  // skipLibCheck is OFF on purpose, as in the bare host: the packages' own .d.ts
+  // files are checked, so a declaration naming an optional peer this app does
+  // not install fails here. `emscripten` is PGlite's global types.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "esModuleInterop": true,
+    "skipLibCheck": false,
+    "noEmit": true,
+    "types": ["node", "emscripten"]
+  },
+  "include": ["src/main/**/*.ts", "src/preload/**/*.ts", "src/server/**/*.ts", "src/shared/**/*.ts", "prisma.config.ts", "playwright.config.ts", "tests/**/*.ts"]
+}

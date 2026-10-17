@@ -1,0 +1,51 @@
+# =============================================================================
+# electron-builder: unsigned installers (D1 spike; signing and updates are D6, #587)
+# =============================================================================
+#
+# asar is OFF for the spike: the server runs `prisma migrate deploy` and
+# `kvox-db check` as child processes that read `prisma/`, `prisma.config.ts`
+# and the Prisma schema engine (a native binary) from the app directory. Moving
+# to asar needs `asarUnpack` for those; D6 measures it.
+appId: cr.marin.kvox.desktop
+productName: KVox
+directories:
+  output: release
+  buildResources: build
+asar: false
+files:
+  - out/**
+  - prisma/**
+  - prisma.config.ts
+  - package.json
+  - "!**/*.map"
+  # The query compilers of the databases this app does not run. (Prisma Studio
+  # and `prisma dev`, ~80 MB, stay: the Prisma CLI loads them eagerly.)
+  - "!node_modules/@prisma/client/runtime/*{cockroachdb,mysql,sqlite,sqlserver}*"
+# The generated Prisma client (node_modules/.prisma) is not a package and a dot
+# folder, so the file walk skips it: copy it next to @prisma/client by hand.
+extraResources:
+  - from: node_modules/.prisma
+    to: app/node_modules/.prisma
+npmRebuild: false
+publish: null
+win:
+  target:
+    - target: nsis
+  artifactName: KVox-${version}-win-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+mac:
+  target:
+    - target: dmg
+  identity: null
+  category: public.app-category.productivity
+  artifactName: KVox-${version}-mac-${arch}.${ext}
+linux:
+  target:
+    - target: AppImage
+    - target: deb
+  executableName: kvox-desktop
+  category: Office
+  maintainer: Oscar Marin <oscar@marin.cr>
+  artifactName: KVox-${version}-linux-${arch}.${ext}

@@ -50,7 +50,7 @@ flowchart LR
 
 | Concern | Choice | Source |
 |---|---|---|
-| Shell | Electron, pinned, bundled Node 24 or later | [ADR-0002](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0002-desktop-shell-electron.md) |
+| Shell | Electron 44.9.0 (pinned exactly; bundles Node 24.22.0) | [ADR-0002](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0002-desktop-shell-electron.md) |
 | Build | electron-vite | ADR-0002 |
 | Server | Nest 11, Fastify 5, in a `utilityProcess` | ADR-0002 |
 | Renderer | React 19, MUI 9, React Router 7 | ADR-0002 |
@@ -86,32 +86,60 @@ No telemetry, no crash upload. The loopback server requires a per-launch token. 
 ## Repository layout
 
 ```
-src/main/        Electron main process
-src/preload/     Preload bridge
-src/renderer/    React app (mounts kvox-web)
-src/server/
-  ports/         Port bindings
-  ai/            AI runtime binding
-  modules/       Nest wiring of kvox-api slices
-tests/e2e/       Playwright for Electron
-docs/decisions/  Desktop ADRs; the shared ones are in the kvox repository
+src/main/        Electron main process: window, kvox:// scheme, egress guard, server lifecycle
+src/preload/     Preload bridge (kvoxDesktop.connection(): port + per-launch token)
+src/renderer/    React app: KvoxWebHost over loopback, kvox-web notes screens
+src/server/      Utility process: Nest 11 + Fastify 5 on 127.0.0.1, PGlite
+  ports/         Port bindings (copied from kvox examples/bare-host, plus the launch-token identity)
+src/shared/      Main <-> server message types
+scripts/         prepare-db.mjs (schema, migrations, client), vendor-kvox-packages.mjs
+vendor/kvox/     The four @marinoscar/kvox-* tarballs (temporary, see below)
+tests/unit/      Vitest
+tests/e2e/       Playwright for Electron (the D1 smoke test)
 ```
 
 ## Getting started
 
-Target commands, established by #582. Prerequisites: Node 24 or later, npm 11 or later.
+Prerequisites: Node 24 or later, npm 11 or later.
 
 ```bash
 npm ci
-npm run dev      # run the app with hot reload
-npm test         # unit tests
-npm run e2e      # Playwright for Electron
-npm run dist     # build installers
+npm run dev        # prepare the database layer, then run the app with hot reload
+npm run typecheck
+npm test           # unit tests (Vitest)
+npm run build      # prepare:db + electron-vite build (out/)
+npm run e2e        # Playwright for Electron against out/ (Linux: xvfb-run -a npm run e2e)
+npm run dist       # build + unsigned installers in release/
 ```
+
+`KVOX_E2E_EXECUTABLE=<path to the packaged app>` makes `npm run e2e` drive an installed or unpacked app instead of `out/` (CI does this).
+
+### How a launch works
+
+1. The main process mints a random per-launch token and forks the server utility process (`out/main/server.js`).
+2. The server opens PGlite in-process under `<userData>/db` with `vector`, `pg_trgm` and `uuid_ossp`, creates `vector` and `pg_trgm`, serves it on a loopback socket (one connection), runs `prisma migrate deploy` and, when that applied anything, `kvox-db check --database`. Both run as child processes on the Electron binary (`ELECTRON_RUN_AS_NODE`), with Prisma's update check off.
+3. It seeds the one local user, adopts the default organization, seeds the note templates and starts Nest on `127.0.0.1:0`. Every route needs `Authorization: Bearer <token>`.
+4. The window loads `kvox://app`, asks the preload for the port and token, and mounts the kvox-web notes screens over a `KvoxWebHost` that talks HTTP + SSE to the loopback server.
+
+The window's session cancels (and logs) any request that is not loopback, `kvox:`, `file:`, `data:`, `blob:` or `devtools:`.
 
 ## Package versions
 
-Pin the `@marinoscar/kvox-*` packages to exact versions and bump them together; they are one release group. Until #577 publishes them, install the `kvox-tarballs` artifact from the kvox CI.
+Pin the `@marinoscar/kvox-*` packages to exact versions and bump them together; they are one release group. `@marinoscar/platform-db` is pinned to `0.1.0-next.5`, the version `@marinoscar/kvox-db` was tested with.
+
+**Temporary: the kvox packages are vendored.** Until marinoscar/kvox#577 publishes them to npm, `vendor/kvox/` holds the four tarballs, built from marinoscar/kvox and packed with `npm pack` (as `examples/bare-host/run.mjs --from pack` does). `vendor/kvox/SOURCE.json` records the kvox commit and each tarball's SHA-256; `package.json` depends on them through `file:` paths. To refresh:
+
+```bash
+npm run vendor:kvox                       # clones marinoscar/kvox main, builds, packs
+npm run vendor:kvox -- --kvox ../kvox     # or from an existing checkout
+npm install                               # then commit vendor/kvox/ and package-lock.json together
+```
+
+When the packages are on npm, replace the `file:` specs with exact versions and delete `vendor/` and the script.
+
+## Database migrations
+
+`npm run prepare:db` (run by `dev` and `build`) writes `prisma/` (git-ignored): `platform db sync`, `platform db compose`, `kvox-db sync --names after-host`, compose again, `prisma generate`. The platform installer gets a fixed `--timestamp`, so the same package versions always produce the same migration directory names. Open point for D2: an upgrade that adds a platform migration shifts the `after-host` names of the domain migrations, which an existing user database has already recorded; this needs a decision in the packages before the first release that ships to users.
 
 ## Roadmap
 
