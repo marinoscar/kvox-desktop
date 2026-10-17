@@ -95,7 +95,8 @@ test('no update request is made unless the user turns on "Check for updates"', a
   expect(feedRequests, 'update requests while updates are off').toEqual([]);
 
   // ---- On: the feed is asked at once ----------------------------------------------
-  await toggle.check();
+  await toggle.click();
+  await expect(toggle).toBeChecked();
   await expect.poll(() => feedRequests.filter((url) => /latest.*\.yml$/.test(url)).length, { timeout: 60_000 }).toBeGreaterThan(0);
   await expect(page.getByRole('status').filter({ hasText: 'is the latest version' })).toBeVisible({ timeout: 60_000 });
   expect(mainLog.some((line) => line.includes('updates: on, allowing github.com'))).toBe(true);
@@ -110,7 +111,8 @@ test('no update request is made unless the user turns on "Check for updates"', a
   await page.getByRole('link', { name: 'Settings' }).click();
   await expect(page.getByLabel('Check for updates')).toBeChecked();
   await expect(page.getByRole('status').filter({ hasText: 'is the latest version' })).toBeVisible({ timeout: 60_000 });
-  await page.getByLabel('Check for updates').uncheck();
+  await page.getByLabel('Check for updates').click();
+  await expect(page.getByLabel('Check for updates')).not.toBeChecked();
   await expect(page.getByRole('status').filter({ hasText: 'does not contact any update server' })).toBeVisible();
   await app!.close();
   feedRequests.length = 0;

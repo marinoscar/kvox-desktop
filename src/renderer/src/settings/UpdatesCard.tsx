@@ -65,6 +65,8 @@ export function UpdatesCard() {
 
   const toggle = async (enabled: boolean) => {
     const mine = ++generation.current;
+    // The switch follows the click at once; the main process's answer then fills in the status.
+    setStatus((current) => current && { ...current, enabled, state: enabled ? 'idle' : 'off' });
     const value = await window.kvoxDesktop.setUpdatesEnabled(enabled);
     if (mounted.current && mine === generation.current) setStatus(value);
   };
