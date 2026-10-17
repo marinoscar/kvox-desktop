@@ -1,12 +1,12 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import type { DesktopConnection } from '../../shared/protocol';
+import type { KvoxDesktopBridge } from '../../shared/protocol';
 import { App } from './App';
 
 declare global {
   interface Window {
-    kvoxDesktop: { connection(): Promise<DesktopConnection> };
+    kvoxDesktop: KvoxDesktopBridge;
   }
 }
 

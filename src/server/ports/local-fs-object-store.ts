@@ -1,4 +1,6 @@
-// Copied from marinoscar/kvox examples/bare-host/src/ports/local-fs-object-store.ts (kvox commit in vendor/kvox/SOURCE.json). A host binding; keep it in step with the bare host.
+// From marinoscar/kvox examples/bare-host/src/ports/local-fs-object-store.ts (kvox commit in vendor/kvox/SOURCE.json). A host binding; keep it in step with the bare host.
+// Desktop changes (marinoscar/kvox#583): bytes under `<userData>/vault`, and every partial file (upload parts,
+// assembly, the temp file of `put`) under `<userData>/tmp/parts`, so the vault only ever holds whole objects.
 import { createHmac, randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
@@ -32,7 +34,11 @@ import {
 // What KVox Desktop takes as a starting point. Every object is a row of the
 // platform's `storage_objects` table (the domain tables reference it by foreign
 // key: `transcripts.source_object_id`, `notes.source_object_id`, ...) and its
-// bytes are a file under `<dataDir>/objects/<storage_key>`.
+// bytes are a file under `<vaultDir>/<storage_key>` (`<userData>/vault`).
+//
+// A FILE APPEARS IN THE VAULT WHOLE OR NOT AT ALL: it is written in the parts
+// folder and renamed into place (same volume), so a crash never leaves half an
+// object where the backup and `openRead` look.
 //
 // UPLOADS ARE THE SAME TWO-STEP PROTOCOL AS S3, over loopback. `initUpload`
 // inserts the row (status `pending`) and returns `http://127.0.0.1:<port>/local-store/parts/<id>/<n>`
@@ -97,8 +103,10 @@ interface UploadedListener {
 export interface LocalFsObjectStoreOptions {
   /** The host's Prisma client. */
   prisma: PrismaClient;
-  /** The folder that holds `objects/` (bytes) and `parts/` (uploads in flight). */
-  dataDir: string;
+  /** The vault: one file per object, at its storage key. */
+  vaultDir: string;
+  /** Upload parts and partial files; on the same volume as the vault (renames), emptied at start-up. */
+  partsDir: string;
   /** The organization every `storage_objects` row belongs to (NOT NULL in the platform table). */
   orgId: string;
   /** The origin the signed URLs point at, resolved when a URL is minted (the port is known only after `listen`). */
@@ -131,7 +139,7 @@ function splitMetadata(metadata: Prisma.JsonValue | null): { managedBy: KvoxMana
  *
  * @example
  * ```ts
- * const store = new LocalFsObjectStore({ prisma, dataDir: '.data', orgId, baseUrl: () => 'http://127.0.0.1:3000' });
+ * const store = new LocalFsObjectStore({ prisma, vaultDir, partsDir, orgId, baseUrl: () => 'http://127.0.0.1:3000' });
  * ```
  */
 export class LocalFsObjectStore implements KvoxObjectStorePort {
@@ -152,8 +160,8 @@ export class LocalFsObjectStore implements KvoxObjectStorePort {
     this.orgId = options.orgId;
     this.baseUrl = options.baseUrl;
     this.partSize = options.partSize ?? DEFAULT_PART_SIZE;
-    this.objectsDir = resolve(options.dataDir, 'objects');
-    this.partsDir = resolve(options.dataDir, 'parts');
+    this.objectsDir = resolve(options.vaultDir);
+    this.partsDir = resolve(options.partsDir);
   }
 
   // -- signed URLs ---------------------------------------------------------------
@@ -191,9 +199,19 @@ export class LocalFsObjectStore implements KvoxObjectStorePort {
 
   // -- paths ---------------------------------------------------------------------
 
-  /** The file of a storage key. Refuses an absolute key, a `..` segment and a NUL byte. */
+  /**
+   * The file of a storage key. Refuses an absolute key, a `..` segment and a NUL byte, and, on every OS, a
+   * backslash or a drive prefix: a key must name the same file on Windows, macOS and Linux (a backup moves).
+   */
   private pathOfKey(key: string): string {
-    if (key.length === 0 || key.includes('\0') || isAbsolute(key) || key.split(/[\\/]/).includes('..')) {
+    if (
+      key.length === 0 ||
+      key.includes('\0') ||
+      key.includes('\\') ||
+      /^[a-zA-Z]:/.test(key) ||
+      isAbsolute(key) ||
+      key.split('/').includes('..')
+    ) {
       throw new Error(`Refusing the unsafe storage key "${key}"`);
     }
     const path = resolve(this.objectsDir, key);
@@ -331,7 +349,8 @@ export class LocalFsObjectStore implements KvoxObjectStorePort {
 
     const target = this.pathOfKey(row.storageKey);
     await mkdir(dirname(target), { recursive: true });
-    const assembled = `${target}.assembling`;
+    await mkdir(this.partsDir, { recursive: true });
+    const assembled = join(this.partsDir, `${objectId}.assembling`);
     const out = createWriteStream(assembled);
     for (let partNumber = 1; partNumber <= totalParts; partNumber += 1) {
       if (!present.has(String(partNumber))) continue;
@@ -391,7 +410,8 @@ export class LocalFsObjectStore implements KvoxObjectStorePort {
     if (existing) return { objectId: existing.id, size: Number(existing.size) };
 
     await mkdir(dirname(path), { recursive: true });
-    const temp = `${path}.${randomBytes(4).toString('hex')}.tmp`;
+    await mkdir(this.partsDir, { recursive: true });
+    const temp = join(this.partsDir, `put-${randomBytes(8).toString('hex')}.tmp`);
     let size = 0;
     const counter = new Transform({
       transform(chunk: Buffer, _encoding, callback) {

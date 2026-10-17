@@ -15,9 +15,11 @@ import { KvoxWebHostProvider } from '@marinoscar/kvox-web/core/headless';
 import type { DesktopConnection } from '../../shared/protocol';
 import { createDesktopHost } from './host';
 import { desktopNotesRoutes, renderKvoxRoutes } from './routes';
+import { SettingsPage } from './settings/SettingsPage';
 
-// The shell of the spike: one bar, the notes destination, the notes routes.
-// Navigation, the settings hub and theming are D2 and later.
+// The shell: one bar, the notes destination, the notes routes and the
+// settings page (the cards of `settings/registry.tsx`; the full settings hub
+// and theming are D3, marinoscar/kvox#584).
 
 const theme = createTheme({ colorSchemes: { light: true, dark: true } });
 
@@ -39,6 +41,9 @@ export function App({ connection }: { connection: DesktopConnection }) {
               <Button component={RouterLink} to="/settings/note-templates">
                 Templates
               </Button>
+              <Button component={RouterLink} to="/settings">
+                Settings
+              </Button>
             </Toolbar>
           </AppBar>
           <Container maxWidth="lg" sx={{ py: 3 }}>
@@ -52,6 +57,7 @@ export function App({ connection }: { connection: DesktopConnection }) {
               <Routes>
                 <Route path="/" element={<Navigate to="/notes" replace />} />
                 {renderKvoxRoutes(desktopNotesRoutes)}
+                <Route path="/settings" element={<SettingsPage />} />
                 <Route path="*" element={<Navigate to="/notes" replace />} />
               </Routes>
             </Suspense>

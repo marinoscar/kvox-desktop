@@ -87,15 +87,15 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   await page.waitForURL(/#\/notes\/[0-9a-f-]{36}$/);
   const noteId = /#\/notes\/([0-9a-f-]{36})$/.exec(page.url())![1];
   await expect(page.getByText('Desktop smoke marker: zebracorn.')).toBeVisible();
-  const title = (await page.getByRole('heading', { level: 1 }).first().textContent())?.trim() ?? '';
-  expect(title).not.toBe('');
+  await expect(page.getByRole('heading', { level: 1 }).first()).not.toHaveText('');
   metrics.coldIdleMemoryMb = await idleMemory(first.app);
   await first.app.close();
 
   // ---- Second launch: same data folder ---------------------------------------
   const second = await launch('warm');
-  // The library lists the note by its title; opening it shows the generated body.
-  await second.page.getByText(title, { exact: true }).first().click();
+  // The library lists the note with its generated body; opening it shows the note. (Not by the title read in
+  // the first run: the heading shows the template's name until the generated title replaces it.)
+  await second.page.getByRole('button').filter({ hasText: 'Desktop smoke marker: zebracorn.' }).first().click();
   await second.page.waitForURL(new RegExp(`#/notes/${noteId}$`));
   await expect(second.page.getByText('Desktop smoke marker: zebracorn.')).toBeVisible();
   metrics.warmIdleMemoryMb = await idleMemory(second.app);

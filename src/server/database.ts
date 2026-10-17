@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 
@@ -31,6 +32,10 @@ import { PrismaClient } from '@prisma/client';
 //   3. `kvox-db check --database`, only when step 2 applied something (the
 //      first launch and every upgrade), because it costs a process start.
 //
+// A RESTORE is applied before step 1 (`applyPendingRestore` in
+// `backup/backup.ts`): PGlite is single-writer, so the data directory can only
+// be swapped while nothing has it open.
+//
 // The child processes run on the Electron binary in Node mode
 // (ELECTRON_RUN_AS_NODE), so a packaged app needs no separate Node. Prisma's
 // update check and telemetry are switched off: the AI provider is the only
@@ -48,6 +53,8 @@ export interface DesktopDatabase {
   readonly applied: number;
   /** Milliseconds per step, for the cold-start report. */
   readonly timings: Record<string, number>;
+  /** A gzip tarball of the data directory after a checkpoint (`PGlite.dumpDataDir`), for a backup. */
+  dump(): Promise<Uint8Array>;
   /** Stops the socket and closes PGlite (flushes its files). Safe to call twice. */
   close(): Promise<void>;
 }
@@ -66,7 +73,8 @@ export interface DatabaseOptions {
 
 /** The `bin` script of an installed package. */
 function binOf(appRoot: string, pkg: string, name: string): string {
-  const manifestPath = require.resolve(`${pkg}/package.json`, { paths: [appRoot] });
+  // Resolved from the app root (not this bundle), which also works where `require` is not a global (the tests).
+  const manifestPath = createRequire(join(appRoot, 'package.json')).resolve(`${pkg}/package.json`);
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { bin: string | Record<string, string> };
   return join(dirname(manifestPath), typeof manifest.bin === 'string' ? manifest.bin : manifest.bin[name]);
 }
@@ -115,6 +123,9 @@ function freePort(): Promise<number> {
   });
 }
 
+/** The extensions every open of the data directory loads (a restore loads the same). */
+export const PGLITE_EXTENSIONS = { vector, pg_trgm, uuid_ossp };
+
 /** Opens PGlite, applies every migration and, after a change, proves the domain objects exist. */
 export async function startDatabase(options: DatabaseOptions): Promise<DesktopDatabase> {
   const timings: Record<string, number> = {};
@@ -129,7 +140,7 @@ export async function startDatabase(options: DatabaseOptions): Promise<DesktopDa
 
   mkdirSync(options.dataDir, { recursive: true });
   const db = await time('pgliteOpen', () =>
-    PGlite.create({ dataDir: options.dataDir, extensions: { vector, pg_trgm, uuid_ossp } }),
+    PGlite.create({ dataDir: options.dataDir, extensions: PGLITE_EXTENSIONS }),
   );
   await db.exec('CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;');
 
@@ -144,6 +155,10 @@ export async function startDatabase(options: DatabaseOptions): Promise<DesktopDa
     closed = true;
     await server.stop();
     await db.close();
+  };
+  const dump = async (): Promise<Uint8Array> => {
+    await db.exec('CHECKPOINT');
+    return new Uint8Array(await (await db.dumpDataDir('gzip')).arrayBuffer());
   };
 
   try {
@@ -174,7 +189,7 @@ export async function startDatabase(options: DatabaseOptions): Promise<DesktopDa
     } else {
       options.log('database: no pending migrations');
     }
-    return { url, applied, timings, close };
+    return { url, applied, timings, dump, close };
   } catch (error) {
     await close().catch(() => undefined);
     throw error;
