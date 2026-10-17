@@ -108,6 +108,8 @@ test('no update request is made unless the user turns on "Check for updates"', a
 
   // ---- Off again: the next launch makes no request ---------------------------------
   await page.getByRole('link', { name: 'Settings' }).click();
+  await expect(page.getByLabel('Check for updates')).toBeChecked();
+  await expect(page.getByRole('status').filter({ hasText: 'is the latest version' })).toBeVisible({ timeout: 60_000 });
   await page.getByLabel('Check for updates').uncheck();
   await expect(page.getByRole('status').filter({ hasText: 'does not contact any update server' })).toBeVisible();
   await app!.close();

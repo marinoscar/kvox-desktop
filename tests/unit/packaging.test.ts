@@ -21,7 +21,9 @@ import { unpackedSchemaEngine, workingDirectoryOf } from '../../src/server/datab
 // =============================================================================
 
 const ROOT = resolve(__dirname, '..', '..');
-const config = readFileSync(join(ROOT, 'electron-builder.yml'), 'utf8');
+// Line endings normalized: a Windows checkout has CRLF.
+const read = (...path: string[]) => readFileSync(join(ROOT, ...path), 'utf8').replace(/\r\n/g, '\n');
+const config = read('electron-builder.yml');
 
 const AZURE = {
   AZURE_SIGNING_ENDPOINT: 'https://eus.codesigning.azure.net',
@@ -96,21 +98,21 @@ describe('electron-builder.yml', () => {
 
   it('ships the AppArmor profile in the .deb, for the packaged binary only', () => {
     expect(config).toContain('appArmorProfile: build/linux/kvox-desktop.apparmor');
-    const profile = readFileSync(join(ROOT, 'build', 'linux', 'kvox-desktop.apparmor'), 'utf8');
+    const profile = read('build', 'linux', 'kvox-desktop.apparmor');
     expect(profile).toContain('abi <abi/4.0>,');
     expect(profile).toMatch(/profile \$\{executable\} "\/opt\/\$\{sanitizedProductName\}\/\$\{executable\}" flags=\(unconfined\) \{\s+userns,/);
   });
 
   it('keeps the user data on uninstall unless the user asks, and never on an update', () => {
     expect(config).toContain('deleteAppDataOnUninstall: false');
-    const nsh = readFileSync(join(ROOT, 'build', 'installer.nsh'), 'utf8');
+    const nsh = read('build', 'installer.nsh');
     expect(nsh).toContain('${ifNot} ${isUpdated}');
     expect(nsh).toContain('/SD IDNO');
     expect(nsh).toContain('RMDir /r "$APPDATA\\${PRODUCT_NAME}"');
   });
 
   it('grants macOS the JIT entitlement and nothing else', () => {
-    const plist = readFileSync(join(ROOT, 'build', 'entitlements.mac.plist'), 'utf8');
+    const plist = read('build', 'entitlements.mac.plist');
     expect([...plist.matchAll(/<key>([^<]+)<\/key>/g)].map((m) => m[1])).toEqual(['com.apple.security.cs.allow-jit']);
   });
 });

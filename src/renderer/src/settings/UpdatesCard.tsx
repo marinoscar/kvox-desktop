@@ -15,7 +15,8 @@ import type { UpdateStatus } from '../../../shared/protocol';
 // Off by default (ADR-0004). On, the main process checks GitHub Releases now
 // and every six hours, downloads a newer version in the background and
 // installs it when KVox quits; the card offers to restart at once. The status
-// is polled while a check or a download runs.
+// is polled while a check or a download runs; a poll answered after the user
+// flipped the switch is dropped (it would show the old state).
 // =============================================================================
 
 const BUSY: ReadonlyArray<UpdateStatus['state']> = ['idle', 'checking', 'downloading'];
@@ -41,10 +42,13 @@ function describe(status: UpdateStatus): string {
 export function UpdatesCard() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const mounted = useRef(true);
+  /** Bumped by every toggle: a status read started before it is stale. */
+  const generation = useRef(0);
 
   useEffect(() => {
     mounted.current = true;
-    void window.kvoxDesktop.updates().then((value) => mounted.current && setStatus(value));
+    const asked = generation.current;
+    void window.kvoxDesktop.updates().then((value) => mounted.current && asked === generation.current && setStatus(value));
     return () => {
       mounted.current = false;
     };
@@ -52,11 +56,18 @@ export function UpdatesCard() {
 
   useEffect(() => {
     if (!status || !BUSY.includes(status.state)) return;
-    const timer = setInterval(() => void window.kvoxDesktop.updates().then((value) => mounted.current && setStatus(value)), 2000);
+    const timer = setInterval(() => {
+      const asked = generation.current;
+      void window.kvoxDesktop.updates().then((value) => mounted.current && asked === generation.current && setStatus(value));
+    }, 2000);
     return () => clearInterval(timer);
   }, [status]);
 
-  const toggle = async (enabled: boolean) => setStatus(await window.kvoxDesktop.setUpdatesEnabled(enabled));
+  const toggle = async (enabled: boolean) => {
+    const mine = ++generation.current;
+    const value = await window.kvoxDesktop.setUpdatesEnabled(enabled);
+    if (mounted.current && mine === generation.current) setStatus(value);
+  };
 
   return (
     <Stack spacing={2}>
