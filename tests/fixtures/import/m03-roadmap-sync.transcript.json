@@ -1,0 +1,26 @@
+{
+  "schema": "kvox.transcript/v1",
+  "transcript": {
+    "id": "tr_m03_roadmap_sync",
+    "title": "M03 roadmap sync",
+    "language": "en",
+    "durationMs": 24000,
+    "version": 2,
+    "author": null,
+    "createdAt": "2026-03-04T15:40:00.000Z",
+    "exportedAt": "2026-03-05T09:00:00.000Z",
+    "recordedAt": "2026-03-04T15:00:00.000Z",
+    "provider": { "id": "assemblyai", "model": "best" },
+    "speakers": [
+      { "id": "spk_a", "displayName": "Dana Example", "talkTimeMs": 12000 },
+      { "id": "spk_b", "displayName": "Lee Ortiz", "talkTimeMs": 8000 },
+      { "id": "spk_c", "displayName": "Speaker C", "talkTimeMs": 4000 }
+    ],
+    "segments": [
+      { "id": "seg_1", "speakerId": "spk_a", "startMs": 0, "endMs": 6000, "text": "Welcome everyone. Today we review the Q2 roadmap." },
+      { "id": "seg_2", "speakerId": "spk_b", "startMs": 6000, "endMs": 14000, "text": "The import feature ships in April and desktop follows in May." },
+      { "id": "seg_3", "speakerId": "spk_c", "startMs": 14000, "endMs": 18000, "text": "Do we need a migration guide?" },
+      { "id": "seg_4", "speakerId": "spk_a", "startMs": 18000, "endMs": 24000, "text": "Yes. Lee, please send the release checklist by Friday." }
+    ]
+  }
+}
