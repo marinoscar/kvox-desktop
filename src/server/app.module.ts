@@ -26,8 +26,9 @@ import { StorageObjectsController } from './storage-objects.controller.js';
 //                        peer of notes, needs it.
 //   SearchModule         full text (the fake AI reports no embeddings)
 //   TranscriptsModule    no schedules, no transcode, no PDF exporter
-//   NotesModule          no schedules, no PDF/Word exporter, no PDF source;
-//                        text and Markdown documents are a source
+//   NotesModule          no schedules, no PDF/Word exporter; PDF, text and
+//                        Markdown documents are a source (`unpdf` reads a
+//                        PDF transcript, marinoscar/kvox#585)
 //
 // `schedules: false` everywhere: the housekeeping enqueuers are called on the
 // host's own timer (still to wire). The ports module comes first (it is global), then the
@@ -61,7 +62,6 @@ export function createDesktopModule(options: DesktopModuleOptions): DynamicModul
   const notes = NotesModule.forRoot({
     schedules: false,
     exporters: { pdf: false, docx: false },
-    documentSources: { pdf: false },
     peers: { transcripts, searchIndexing },
   });
 

@@ -6,6 +6,7 @@ import { BrowserWindow, Notification, app, dialog, ipcMain, net, protocol, sessi
 
 import type { DesktopConnection, FromServer, ToServer } from '../shared/protocol';
 import { runNodeScript } from './node-scripts';
+import { registerImportIpc } from './import';
 import { runSecretOp, secretStorageStatus } from './secret-storage';
 import { readShellSettings, writeShellSettings } from './shell-settings';
 import { DesktopUpdates } from './updates';
@@ -36,7 +37,10 @@ import { DesktopUpdates } from './updates';
 //      and the plaintext-secrets consent (`settings.json`). And a utility
 //      process per migration command (`node-scripts.ts`): the RunAsNode fuse
 //      is off.
-//   5. OPT-IN UPDATES (`updates.ts`): off until the user turns them on; the
+//   5. IMPORT (marinoscar/kvox#585): the native "Import…" dialog and files
+//      dropped on the window are read here and streamed to the local server's
+//      upload routes (`import.ts`); the window never reads a file itself.
+//   6. OPT-IN UPDATES (`updates.ts`): off until the user turns them on; the
 //      updater's own session reaches GitHub Releases only while they are on.
 //
 // The user data folder is `app.getPath('userData')` (KVox under the OS's
@@ -277,6 +281,7 @@ if (!app.requestSingleInstanceLock()) {
 
   ipcMain.handle('kvox:connection', () => connection);
   registerShellIpc();
+  registerImportIpc({ window: () => mainWindow, connection: () => connection, log });
 
   void app.whenReady().then(() => {
     installEgressGuard();

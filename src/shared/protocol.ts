@@ -73,6 +73,15 @@ export interface UpdateStatus {
   message?: string;
 }
 
+/**
+ * What one file import produced (marinoscar/kvox#585): a note (a KVox note export), a
+ * transcript (a transcript JSON export) or a note source document (PDF, Markdown,
+ * text), or the server's refusal in words a person can read.
+ */
+export type ImportOutcome =
+  | { ok: true; kind: 'note' | 'transcript' | 'document'; id: string; title: string; filename: string }
+  | { ok: false; filename: string; message: string; reason?: string; status?: number };
+
 /** The renderer's door to the shell (`window.kvoxDesktop`, set by the preload). */
 export interface KvoxDesktopBridge {
   connection(): Promise<DesktopConnection>;
@@ -90,4 +99,8 @@ export interface KvoxDesktopBridge {
   setUpdatesEnabled(enabled: boolean): Promise<UpdateStatus>;
   /** Quits and installs a downloaded update. */
   installUpdate(): Promise<void>;
+  /** The native open dialog, then each chosen file imported; `null` when cancelled. */
+  importFromDialog(): Promise<ImportOutcome[] | null>;
+  /** Imports files dropped on the window (their paths are read in the preload). */
+  importDropped(files: readonly File[]): Promise<ImportOutcome[]>;
 }

@@ -172,8 +172,10 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       exposedHeaders: ['Content-Disposition', 'ETag'],
       maxAge: 600,
     });
-    // The document-source upload (`POST /api/notes/sources/documents`) is multipart; the slice
-    // reads it through `@fastify/multipart`, which the host registers.
+    // The uploads are multipart: the document source (`POST /api/notes/sources/documents`) and
+    // the two imports (`POST /api/transcripts/imports`, `POST /api/notes/import`, #585). The
+    // slices read them through `@fastify/multipart`, which the host registers; each route sets
+    // its own size limit on the read.
     await app.register(multipart);
     app.setGlobalPrefix('api', { exclude: ['local-store/*path'] });
     // Upload parts arrive with the file's own content type: hand the bytes through.

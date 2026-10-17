@@ -110,6 +110,18 @@ Settings > Data and privacy > **Export data…** writes one `.kvoxbackup` file w
 
 Both run as background jobs. Saved API keys, `settings.json` and the logs are not in a backup: the keys only decrypt for this OS user on this machine, so enter them again after a restore.
 
+## Importing
+
+Notes > **Import…** opens the system file dialog; dropping files anywhere on the window does the same. KVox reads each file in the main process and sends it to the local server (never anywhere else):
+
+| You import | KVox creates | Then |
+|---|---|---|
+| A PDF transcript, a Markdown or a text file | A note source document; its text is extracted | "New note" opens with the document chosen: pick a template and generate |
+| A transcript exported from KVox web as JSON (`kvox.transcript/v1`) | A transcript, with its speaker names and recording date | "New note" opens with the transcript chosen |
+| A note exported from KVox web as Markdown | The same note (same title and body), ready to edit | The note opens |
+
+The file's content decides, not its name (`detectKvoxImport` in `@marinoscar/kvox-contract/notes`); the formats are read by the packages, never here. A file KVox cannot use (audio, video, a foreign JSON) gets the server's own explanation. Size limits are the slices': 5 MiB for a note, 25 MiB for a transcript, `ai.maxDocumentBytes` (10 MiB) for a document. There is no transcription: audio and video are refused.
+
 ## AI providers
 
 | Provider | Setup | Status |
@@ -122,10 +134,11 @@ Both run as background jobs. Saved API keys, `settings.json` and the logs are no
 
 ```
 src/main/        Electron main process: window, kvox:// scheme, window egress guard, server lifecycle,
-                 safeStorage and Notification for the server, backup dialogs, migration utility
-                 processes (node-scripts.ts), opt-in updates (updates.ts, update-policy.ts)
-src/preload/     Preload bridge (kvoxDesktop: connection, data folder, backup dialogs, secret storage)
-src/renderer/    React app: KvoxWebHost over loopback, kvox-web notes screens, settings cards (settings/registry.tsx)
+                 safeStorage and Notification for the server, backup dialogs, import (dialog, dropped files),
+                 migration utility processes (node-scripts.ts), opt-in updates (updates.ts, update-policy.ts)
+src/preload/     Preload bridge (kvoxDesktop: connection, data folder, backup dialogs, secret storage, import, updates)
+src/renderer/    React app: KvoxWebHost over loopback, kvox-web notes screens, settings cards (settings/registry.tsx),
+                 the Import action and drop target (import/)
 src/server/      Utility process: Nest 11 + Fastify 5 on 127.0.0.1, PGlite, server egress guard
   ports/         One adapter per port (below)
   backup/        .kvoxbackup export and restore, run as jobs
@@ -138,7 +151,9 @@ build/           Packaging resources: macOS entitlements, the NSIS "Remove my da
 vendor/kvox/     The four @marinoscar/kvox-* tarballs (temporary, see below)
 tests/unit/      Vitest: the ports conformance kit, jobs (timeouts, back-off, a real kill mid-job), egress, secrets, backup
 tests/crash/     The child process the crash-recovery test kills
-tests/e2e/       Playwright for Electron (smoke, window egress and settings, opt-in updates)
+tests/unit/import.test.ts  every import kind against the real local server
+tests/e2e/       Playwright for Electron (smoke, window egress and settings, import by dialog and drag and drop, opt-in updates)
+tests/fixtures/  Synthetic import fixtures (a PDF transcript, a transcript JSON, a note export)
 ```
 
 ### Ports
