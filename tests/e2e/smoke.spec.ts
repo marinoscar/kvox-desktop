@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
+import { MOCK_NOTE_TEXT, configureAiProvider } from '../support/configure-ai';
 import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
 
 // =============================================================================
@@ -24,8 +25,6 @@ import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support
 
 const ROOT = resolve(__dirname, '..', '..');
 const PLANTED_KEY = 'sk-e2e-PLANTEDkvox584DoNotLeak0123456789';
-const NOTE_TEXT =
-  '# Meeting notes\n\nGenerated on this device through the configured AI provider.\n\n- Joe sends the budget by Friday.\n- Desktop smoke marker: zebracorn.\n';
 let provider: OpenAiCompatibleMock | undefined;
 const userDataDir = mkdtempSync(join(tmpdir(), 'kvox-e2e-'));
 const requests: string[] = [];
@@ -68,7 +67,7 @@ async function idleMemory(app: ElectronApplication): Promise<Record<string, numb
 }
 
 test.beforeAll(async () => {
-  provider = await startOpenAiCompatibleMock(NOTE_TEXT);
+  provider = await startOpenAiCompatibleMock(MOCK_NOTE_TEXT);
 });
 
 test.afterAll(async () => {
@@ -89,25 +88,11 @@ test('a note generated from a Markdown file survives a restart, with no egress',
 
   // ---- Settings: the provider, its model, its key ------------------------------
   await page.getByRole('link', { name: 'Settings' }).click();
-  await expect(page.getByRole('heading', { name: 'AI provider' })).toBeVisible();
   await expect(page.getByText('KVox may connect only to: api.openai.com')).toBeVisible();
   await expect(page.getByLabel(/GitHub Copilot/)).toBeDisabled();
-  await page.getByRole('radio', { name: 'OpenAI-compatible server' }).check();
-  await page.getByLabel('Base URL').fill(provider!.baseUrl);
-  await page.getByLabel('Model').fill('mock-model');
-  await page.getByRole('button', { name: 'Save AI settings' }).click();
-  await expect(page.getByText('AI settings saved.')).toBeVisible();
+  await configureAiProvider(page, { baseUrl: provider!.baseUrl, apiKey: PLANTED_KEY });
+  await page.getByRole('link', { name: 'Settings' }).click();
   await expect(page.getByText('KVox connects to nothing outside this device.')).toBeVisible();
-  // A Linux session with no keyring: the key is refused until the user accepts plaintext storage.
-  const plaintext = page.getByLabel('Store keys without system encryption on this device');
-  if (await plaintext.isVisible()) {
-    // Controlled by the main process's answer: click, then wait for the box to follow.
-    await plaintext.click();
-    await expect(plaintext).toBeChecked();
-  }
-  await page.getByLabel('API key', { exact: true }).fill(PLANTED_KEY);
-  await page.getByRole('button', { name: 'Save key' }).click();
-  await expect(page.getByText('API key saved in the system keychain.')).toBeVisible();
   await expect(page.getByLabel('API key status')).toHaveText(new RegExp(`A key is saved \\(…${PLANTED_KEY.slice(-4)}\\)`));
   await expect(page.getByLabel('API key', { exact: true })).toHaveValue('');
   await page.getByRole('link', { name: 'Notes' }).click();
