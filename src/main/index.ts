@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { BrowserWindow, Notification, app, dialog, ipcMain, net, protocol, session, utilityProcess, type UtilityProcess } from 'electron';
 
 import type { DesktopConnection, FromServer, ToServer } from '../shared/protocol';
+import { registerImportIpc } from './import';
 import { runSecretOp, secretStorageStatus } from './secret-storage';
 import { readShellSettings, writeShellSettings } from './shell-settings';
 
@@ -32,6 +33,9 @@ import { readShellSettings, writeShellSettings } from './shell-settings';
 //      and a restart of the server after a restore was staged (the window
 //      reloads onto the new server). For the window: the native backup dialogs
 //      and the plaintext-secrets consent (`settings.json`).
+//   5. IMPORT (marinoscar/kvox#585): the native "Import…" dialog and files
+//      dropped on the window are read here and streamed to the local server's
+//      upload routes (`import.ts`); the window never reads a file itself.
 //
 // The user data folder is `app.getPath('userData')` (KVox under the OS's
 // application-data folder). `KVOX_USER_DATA_DIR` overrides it, for tests.
@@ -265,6 +269,7 @@ if (!app.requestSingleInstanceLock()) {
 
   ipcMain.handle('kvox:connection', () => connection);
   registerShellIpc();
+  registerImportIpc({ window: () => mainWindow, connection: () => connection, log });
 
   void app.whenReady().then(() => {
     installEgressGuard();
