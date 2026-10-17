@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import type { PrismaClient } from '@prisma/client';
 
-import { createPrismaClient, startDatabase, type DesktopDatabase } from '../../../src/server/database';
+import { createPrismaClient, spawnNodeScript, startDatabase, type DesktopDatabase } from '../../../src/server/database';
 import { seedDatabase } from '../../../src/server/seed';
 
 // A real PGlite database for the port tests: the app's own start-up sequence
@@ -33,7 +33,7 @@ export interface TestDatabase {
 
 /** A fresh user data folder, or `userDataDir` when given. */
 export async function openTestDatabase(userDataDir = mkdtempSync(join(tmpdir(), 'kvox-unit-'))): Promise<TestDatabase> {
-  const database = await startDatabase({ appRoot: ROOT, dataDir: join(userDataDir, 'db'), nodeExecutable: process.execPath, log: () => undefined });
+  const database = await startDatabase({ appRoot: ROOT, dataDir: join(userDataDir, 'db'), runScript: spawnNodeScript(process.execPath), log: () => undefined });
   const prisma = createPrismaClient(database);
   const orgId = await seedDatabase(prisma);
   return {

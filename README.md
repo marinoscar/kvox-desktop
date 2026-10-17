@@ -76,7 +76,7 @@ Everything KVox keeps lives there, and nowhere else ([ADR-0004](https://github.c
 | `vault/<key>` | The bytes of every document and stored object, one file per object. Files appear whole (written elsewhere, then renamed) |
 | `logs/audit.log` | Append-only JSON lines: who, what, which id, counts. Never titles, text or file names |
 | `secrets.bin` | Saved API keys, each an Electron `safeStorage` blob (OS keychain, DPAPI or Secret Service) |
-| `settings.json` | The shell's own preferences (the plaintext-keys consent below) |
+| `settings.json` | The shell's own preferences: the plaintext-keys consent below, and "Check for updates" (off unless you turn it on) |
 | `tmp/` | Scratch files and upload parts; emptied at every start |
 
 Saved keys never rest in the clear. On Linux without a keyring, Electron falls back to its `basic_text` backend; KVox then refuses to save a key (HTTP 409, `secret_storage_plaintext`) and Settings > Data and privacy shows a warning. Keys are saved only after you set up a keyring or explicitly accept plaintext storage there.
@@ -84,7 +84,7 @@ Saved keys never rest in the clear. On Linux without a keyring, Electron falls b
 What leaves the device:
 
 - Text sent to the configured AI provider when you generate a note or extract the graph. A `sensitive` PersonFact never leaves.
-- A request to GitHub Releases, only if you enable update checks (default off).
+- Requests to GitHub Releases, only if you turn on Settings > Updates > "Check for updates" (default off). Until then the updater is not loaded and its session cancels every request; once on, it may reach `github.com`, `api.github.com`, `objects.githubusercontent.com` and `release-assets.githubusercontent.com` over HTTPS, and nothing else (see [Updates](#updates)).
 
 No telemetry, no crash upload, no remote fonts. Both processes enforce it:
 
@@ -134,20 +134,25 @@ The file's content decides, not its name (`detectKvoxImport` in `@marinoscar/kvo
 
 ```
 src/main/        Electron main process: window, kvox:// scheme, window egress guard, server lifecycle,
-                 safeStorage and Notification for the server, backup dialogs, import (dialog, dropped files)
-src/preload/     Preload bridge (kvoxDesktop: connection, data folder, backup dialogs, secret storage, import)
+                 safeStorage and Notification for the server, backup dialogs, import (dialog, dropped files),
+                 migration utility processes (node-scripts.ts), opt-in updates (updates.ts, update-policy.ts)
+src/preload/     Preload bridge (kvoxDesktop: connection, data folder, backup dialogs, secret storage, import, updates)
 src/renderer/    React app: KvoxWebHost over loopback, kvox-web notes screens, settings cards (settings/registry.tsx),
                  the Import action and drop target (import/)
 src/server/      Utility process: Nest 11 + Fastify 5 on 127.0.0.1, PGlite, server egress guard
   ports/         One adapter per port (below)
   backup/        .kvoxbackup export and restore, run as jobs
 src/shared/      Main <-> server message types
-scripts/         prepare-db.mjs (schema, migrations, client), vendor-kvox-packages.mjs
+scripts/         prepare-db.mjs (schema, migrations, client), vendor-kvox-packages.mjs,
+                 dist.mjs (installers, signed when the secrets exist), packaged-app.mjs (asar and fuse
+                 checks, the e2e copy), release-files.mjs (latest-mac.yml merge, SHA256SUMS, publish gate)
+build/           Packaging resources: macOS entitlements, the NSIS "Remove my data" step, the AppArmor profile
+.github/         ci.yml (every PR: four runners, unsigned installers, e2e on the packaged app), release.yml (v* tags)
 vendor/kvox/     The four @marinoscar/kvox-* tarballs (temporary, see below)
 tests/unit/      Vitest: the ports conformance kit, jobs (timeouts, back-off, a real kill mid-job), egress, secrets, backup
 tests/crash/     The child process the crash-recovery test kills
 tests/unit/import.test.ts  every import kind against the real local server
-tests/e2e/       Playwright for Electron (smoke, window egress and settings, import by dialog and drag and drop)
+tests/e2e/       Playwright for Electron (smoke, window egress and settings, import by dialog and drag and drop, opt-in updates)
 tests/fixtures/  Synthetic import fixtures (a PDF transcript, a transcript JSON, a note export)
 ```
 
@@ -180,18 +185,117 @@ npm run typecheck
 npm test           # unit tests (Vitest)
 npm run build      # prepare:db + electron-vite build (out/)
 npm run e2e        # Playwright for Electron against out/ (Linux: xvfb-run -a npm run e2e)
-npm run dist       # build + unsigned installers in release/
+npm run dist       # build + installers in release/ (unsigned unless the signing variables are set)
 ```
 
-`KVOX_E2E_EXECUTABLE=<path to the packaged app>` makes `npm run e2e` drive an installed or unpacked app instead of `out/` (CI does this).
+`KVOX_E2E_EXECUTABLE=<path to the packaged app>` makes `npm run e2e` drive an installed or unpacked app instead of `out/` (CI does this). The packaged binary refuses `--inspect`, which Playwright needs, so drive a copy: `node scripts/packaged-app.mjs test-copy` prints one (see [Packaging](#packaging)).
 
 ### How a launch works
 
 1. The main process mints a random per-launch token and forks the server utility process (`out/main/server.js`).
-2. The server installs its egress guard, applies a staged restore if there is one, then opens PGlite in-process under `<userData>/db` with `vector`, `pg_trgm` and `uuid_ossp`, creates `vector` and `pg_trgm`, serves it on a loopback socket (one connection), runs `prisma migrate deploy` and, when that applied anything, `kvox-db check --database`. Both run as child processes on the Electron binary (`ELECTRON_RUN_AS_NODE`), with Prisma's update check off.
+2. The server installs its egress guard, applies a staged restore if there is one, then opens PGlite in-process under `<userData>/db` with `vector`, `pg_trgm` and `uuid_ossp`, creates `vector` and `pg_trgm`, serves it on a loopback socket (one connection), runs `prisma migrate deploy` and, when that applied anything, `kvox-db check --database`. Both run as utility processes the main process forks on the server's behalf (`src/main/node-scripts.ts`; the RunAsNode fuse is off, so the binary cannot be spawned as Node), with Prisma's update check and telemetry off.
 3. It seeds the one local user, adopts the default organization, seeds the note templates and starts Nest on `127.0.0.1:0`. Every route needs `Authorization: Bearer <token>`. Then it recovers the jobs a previous run left `running` (requeued, or failed when out of attempts) and starts the job loop.
 4. The window loads `kvox://app`, asks the preload for the port and token, and mounts the kvox-web notes screens over a `KvoxWebHost` that talks HTTP + SSE to the loopback server.
 
+
+## Install
+
+Download from the [latest release](https://github.com/marinoscar/kvox-desktop/releases). Every release carries `SHA256SUMS` (and `SHA256SUMS.asc` when it is GPG-signed).
+
+| OS | File | Notes |
+|---|---|---|
+| Windows 10/11 (x64, arm64) | `KVox-<version>-win-setup.exe` | Installs for the current user only; no administrator prompt. One installer for both architectures |
+| macOS 13+ (Apple silicon) | `KVox-<version>-mac-arm64.dmg` | Open the dmg, drag KVox to Applications |
+| macOS 13+ (Intel) | `KVox-<version>-mac-x64.dmg` | |
+| Ubuntu 22.04+ / Debian (x64) | `KVox-<version>-linux-amd64.deb` | **Recommended on Linux**: `sudo apt install ./KVox-<version>-linux-amd64.deb` |
+| Linux (x64) | `KVox-<version>-linux-x86_64.AppImage` | `chmod +x` and run. Needs `libfuse2` (`sudo apt install libfuse2t64` on 24.04, `libfuse2` on 22.04) |
+
+Verify a download before running it:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing          # Linux; macOS: shasum -a 256 -c SHA256SUMS --ignore-missing
+gpg --verify SHA256SUMS.asc SHA256SUMS            # when the release has a signature
+```
+
+On Windows: `Get-FileHash .\KVox-<version>-win-setup.exe -Algorithm SHA256` and compare with the line in `SHA256SUMS`.
+
+**Ubuntu 24.04 and AppArmor.** Ubuntu 24.04 restricts unprivileged user namespaces, which the Chromium sandbox needs. The `.deb` installs an AppArmor profile (`/etc/apparmor.d/kvox-desktop`, from `build/linux/kvox-desktop.apparmor`) that grants them to `/opt/KVox/kvox-desktop` only, and loads it; on 22.04 the profile is skipped (no AppArmor ABI 4.0) and not needed. The AppImage cannot install a profile: on 24.04 prefer the `.deb`, or add an equivalent profile for the AppImage's path yourself. Never run KVox with `--no-sandbox`.
+
+### Uninstall
+
+Uninstalling removes the app, never your data unless you ask for it:
+
+- **Windows**: Settings > Apps > KVox > Uninstall. The uninstaller asks "Remove my data?"; the default, No, keeps `%APPDATA%\KVox`. An update never asks and never removes it.
+- **macOS**: drag `/Applications/KVox.app` to the Bin. To remove your data too: `rm -rf ~/Library/Application\ Support/KVox`.
+- **Ubuntu / Debian**: `sudo apt remove kvox-desktop`. To remove your data too: `rm -rf ~/.config/KVox`.
+- **AppImage**: delete the file; data as on Ubuntu.
+
+Export your data first (Settings > Data and privacy > Export data) if you may want it back.
+
+## Updates
+
+Off by default ([ADR-0004](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0004-desktop-data-local-only.md)). Settings > Updates > "Check for updates" turns them on; the choice is kept in `settings.json`.
+
+| | Off (default) | On |
+|---|---|---|
+| electron-updater | Not loaded | Loaded; checks at once and every six hours |
+| Requests | None. The updater's session (`electron-updater` partition) cancels every request | HTTPS GETs of public release files from the hosts below, nothing else |
+| Allowed hosts | none | `github.com`, `api.github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com` |
+| Install | | Downloaded in the background, installed when KVox quits, or at once with "Restart and install" |
+
+Turning it off stops the timer and closes the session again. No user data is sent. Signature checks: on Windows, electron-updater refuses an installer whose Authenticode publisher differs from the running app's; on macOS, Squirrel.Mac refuses an update whose code signature does not match; Linux packages are checked against the SHA-512 in `latest-linux.yml`. Unsigned builds therefore do not update on Windows or macOS. Updates on Linux need the `.deb` or the AppImage (the unpacked folder does not update).
+
+`src/main/update-policy.ts` holds the allowlist (unit-tested in both states: `tests/unit/update-policy.test.ts`); `tests/e2e/updates.spec.ts` proves on the packaged app, with a loopback feed, that no update request is made while off and that turning it on checks at once.
+
+## Packaging
+
+`npm run dist` runs electron-builder (`electron-builder.yml`) through `scripts/dist.mjs`.
+
+- **asar on.** The app is `resources/app.asar`. Unpacked beside it (`app.asar.unpacked`), because a process is started from them: `prisma/` (schema and migrations), `prisma.config.ts` (it imports nothing at run time, so it loads from the unpacked folder) and the Prisma schema engine binary (named to Prisma with `PRISMA_SCHEMA_ENGINE_BINARY`). The generated client (`node_modules/.prisma`) is copied into the archive by a `files` rule: electron-builder's file walk skips dot folders, and an `extraResources` copy into `resources/app/` would make Electron load that folder instead of the archive.
+- **Fuses**, flipped before signing:
+
+  | Fuse | Value | Why |
+  |---|---|---|
+  | RunAsNode | off | `ELECTRON_RUN_AS_NODE` would let anyone run code as the signed app and read its `safeStorage` key. The migrations run as utility processes instead (`node-script-host.ts` ends them: a utility process does not exit when its event loop drains) |
+  | EnableNodeOptionsEnvironmentVariable | off | No `NODE_OPTIONS` |
+  | EnableNodeCliInspectArguments | off | No `--inspect` (the e2e tests drive a copy with it back on) |
+  | OnlyLoadAppFromAsar | on | Only `app.asar` is loaded |
+  | EnableEmbeddedAsarIntegrityValidation | on | macOS and Windows check the archive's hash |
+  | EnableCookieEncryption | on | |
+  | GrantFileProtocolExtraPrivileges | off | The window is served from `kvox://` |
+  | LoadBrowserProcessSpecificV8Snapshot | off | |
+
+- **macOS**: hardened runtime; one entitlement, `com.apple.security.cs.allow-jit` (V8 compiles JavaScript and WebAssembly, PGlite included, at run time). Not granted: unsigned executable memory, disabled library validation.
+- **Windows**: per-user NSIS (no admin), x64 and arm64 in one installer; the Prisma schema engine is x64 and runs emulated on arm64.
+
+CI checks each build: `node scripts/packaged-app.mjs verify` (layout and fuses of the binary as it ships), then the e2e tests on a copy with `--inspect` back on (`test-copy`). On Ubuntu the `.deb` is installed and the tests run the installed app with the kernel's user-namespace restriction left on, which proves the AppArmor profile.
+
+## Releasing
+
+Tag `v<version>` (it must equal `package.json`'s `version`; a `-` makes it a pre-release, e.g. `v0.1.0-rc.1`) and push the tag. `.github/workflows/release.yml` builds on `windows-latest`, `macos-latest` (arm64), `macos-15-intel` (x64) and `ubuntu-latest`, signs and notarizes what its secrets allow, verifies signatures (`signtool verify /pa`, `codesign`, `spctl -a -vv`, `stapler validate`, `dpkg -I`), runs the packaged smoke test, and creates a **draft** release with every file, the merged `latest-mac.yml` and `SHA256SUMS`. It publishes the release only when Windows was signed and both Mac builds were signed and notarized; otherwise it stays a draft with a warning saying what was missing. A manual run (`workflow_dispatch`) builds and checks without releasing.
+
+Without secrets everything still builds, unsigned, and each runner says so (`::notice` / `::warning` lines and the job summary).
+
+What the owner configures, in the repository's **Settings > Environments > `release`** (create it; under "Deployment branches and tags" allow `v*` tags, and `main` if you want manual dry runs):
+
+| Kind | Name | What |
+|---|---|---|
+| Secret | `AZURE_CLIENT_ID` | App registration (or managed identity) with a federated credential for `repo:marinoscar/kvox-desktop:environment:release`, holding the *Trusted Signing Certificate Profile Signer* role on the certificate profile |
+| Secret | `AZURE_TENANT_ID` | Its Entra tenant |
+| Secret | `AZURE_SUBSCRIPTION_ID` | The subscription of the Trusted Signing account |
+| Variable | `AZURE_SIGNING_ENDPOINT` | The account's region endpoint, e.g. `https://eus.codesigning.azure.net` |
+| Variable | `AZURE_SIGNING_ACCOUNT` | Trusted Signing account name |
+| Variable | `AZURE_SIGNING_CERT_PROFILE` | Certificate profile name |
+| Variable | `AZURE_SIGNING_PUBLISHER_NAME` | The certificate's subject CN exactly (the publisher Windows shows; electron-updater checks it) |
+| Secret | `MAC_CERTIFICATE_P12_BASE64` | "Developer ID Application" certificate with its private key, exported as `.p12`, base64 (`base64 -i cert.p12`) |
+| Secret | `MAC_CERTIFICATE_PASSWORD` | The `.p12` password |
+| Secret | `APPLE_API_KEY_P8_BASE64` | App Store Connect API key (role Developer) `AuthKey_<id>.p8`, base64 |
+| Secret | `APPLE_API_KEY_ID` | Its key id |
+| Secret | `APPLE_API_ISSUER` | Its issuer id |
+| Secret (optional) | `LINUX_GPG_PRIVATE_KEY` | ASCII-armored private key that signs `SHA256SUMS` |
+| Secret (optional) | `LINUX_GPG_PASSPHRASE` | Its passphrase |
+
+Then: tag `v0.0.2-rc.1`, check the draft; tag `v0.0.2-rc.2` with the update setting on in the rc1 install to test an update on each OS.
 
 ## Package versions
 

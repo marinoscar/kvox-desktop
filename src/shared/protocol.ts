@@ -5,9 +5,10 @@
 // The token travels in a message, never in the environment: the server's child
 // processes (the migration commands) inherit its environment.
 //
-// Three services only the main process can offer travel here too: `safeStorage`
-// (the server asks, main answers by `id`), OS notifications and a restart of
-// the server (after a restore was staged).
+// Four services only the main process can offer travel here too: `safeStorage`
+// (the server asks, main answers by `id`), OS notifications, a restart of the
+// server (after a restore was staged) and a utility process for a migration
+// command (`run-node`, answered by `id`; the RunAsNode fuse is off).
 // =============================================================================
 
 /** The `safeStorage` operations the server asks the main process for. */
@@ -19,14 +20,14 @@ export type ToServer =
       type: 'start';
       appRoot: string;
       userDataDir: string;
-      nodeExecutable: string;
       token: string;
       allowedOrigins: string[];
       appVersion: string;
     }
   | { type: 'stop' }
   | { type: 'secrets-result'; id: number; ok: true; value: unknown }
-  | { type: 'secrets-result'; id: number; ok: false; error: string };
+  | { type: 'secrets-result'; id: number; ok: false; error: string }
+  | { type: 'run-node-result'; id: number; code: number | null; output: string };
 
 /** Server -> main. */
 export type FromServer =
@@ -36,7 +37,8 @@ export type FromServer =
   | { type: 'stopped' }
   | ({ type: 'secrets'; id: number } & SecretOp)
   | { type: 'notify'; title: string; body: string }
-  | { type: 'restart'; reason: string };
+  | { type: 'restart'; reason: string }
+  | { type: 'run-node'; id: number; script: string; args: string[]; cwd: string; env: Record<string, string> };
 
 /** What the preload hands the renderer. */
 export interface DesktopConnection {
@@ -56,6 +58,19 @@ export interface SecretStorageStatus {
   backend: string | null;
   /** The user accepted storing keys with `basic_text` (kept in `settings.json`). */
   plaintextAccepted: boolean;
+}
+
+/** Opt-in updates, as the settings card shows them (marinoscar/kvox#587). */
+export interface UpdateStatus {
+  /** The user turned on "Check for updates". */
+  enabled: boolean;
+  state: 'off' | 'idle' | 'checking' | 'up-to-date' | 'downloading' | 'downloaded' | 'error';
+  /** The running version. */
+  currentVersion: string;
+  /** The newer version being downloaded or ready to install. */
+  version?: string;
+  /** The first line of the last error. */
+  message?: string;
 }
 
 /**
@@ -79,6 +94,11 @@ export interface KvoxDesktopBridge {
   secretStorage(): Promise<SecretStorageStatus>;
   /** Records (or withdraws) the consent to store keys with `basic_text`. */
   acceptPlaintextSecrets(accepted: boolean): Promise<SecretStorageStatus>;
+  updates(): Promise<UpdateStatus>;
+  /** Turns "Check for updates" on or off (persisted; applied at once). */
+  setUpdatesEnabled(enabled: boolean): Promise<UpdateStatus>;
+  /** Quits and installs a downloaded update. */
+  installUpdate(): Promise<void>;
   /** The native open dialog, then each chosen file imported; `null` when cancelled. */
   importFromDialog(): Promise<ImportOutcome[] | null>;
   /** Imports files dropped on the window (their paths are read in the preload). */

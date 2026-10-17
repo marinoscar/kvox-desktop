@@ -18,7 +18,7 @@
     "build": "npm run prepare:db && electron-vite build",
     "test": "vitest run",
     "e2e": "playwright test",
-    "dist": "npm run build && electron-builder --publish never",
+    "dist": "npm run build && node scripts/dist.mjs --publish never",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
@@ -37,6 +37,7 @@
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@prisma/client-runtime-utils": "^7.8.0",
+    "electron-updater": "6.8.9",
     "fastify": "^5.0.0",
     "nestjs-zod": "^5.4.0",
     "pg": "^8.23.0",
@@ -50,6 +51,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@electron/fuses": "1.8.0",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@marinoscar/kvox-web": "file:vendor/kvox/marinoscar-kvox-web-0.0.0.tgz",
@@ -69,6 +71,7 @@
     "@types/pg": "^8.15.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "@types/semver": "^7.8.0",
     "@types/yauzl": "^3.4.0",
     "@types/yazl": "^3.3.1",
     "@vitejs/plugin-react": "^6.0.2",

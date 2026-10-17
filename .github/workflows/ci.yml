@@ -1,6 +1,18 @@
 # =============================================================================
-# CI: typecheck, unit tests, unsigned installers and the Electron smoke test,
-# on Windows, macOS (Apple silicon and Intel: macos-15-intel replaces the retired macos-13) and Ubuntu (marinoscar/kvox#582)
+# CI: typecheck, unit tests, unsigned installers and the e2e tests on the
+# PACKAGED app, on Windows, macOS (Apple silicon and Intel) and Ubuntu
+# (marinoscar/kvox#582, #587)
+# =============================================================================
+#
+# No secret is used here: the installers are unsigned (scripts/dist.mjs says so
+# in a notice). Signing, notarization and the GitHub Release are release.yml.
+#
+# The packaged app is checked as it ships (asar layout and fuses:
+# scripts/packaged-app.mjs verify), then driven by Playwright through a copy
+# with the one fuse Playwright needs (--inspect) turned back on. On Ubuntu the
+# .deb is INSTALLED and the tests run the installed app with the kernel's
+# AppArmor restriction on unprivileged user namespaces left in place: the
+# profile the .deb ships is what lets the Chromium sandbox start.
 # =============================================================================
 name: CI
 
@@ -33,7 +45,7 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, macos-15-intel, ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -71,31 +83,38 @@ jobs:
           echo "### Installers (${{ matrix.os }})" >> "$GITHUB_STEP_SUMMARY"
           echo '| File | MB |' >> "$GITHUB_STEP_SUMMARY"
           echo '|---|---|' >> "$GITHUB_STEP_SUMMARY"
-          for f in release/*.exe release/*.dmg release/*.AppImage release/*.deb; do
+          for f in release/*.exe release/*.dmg release/*.zip release/*.AppImage release/*.deb; do
             [ -f "$f" ] || continue
             size=$(node -e "console.log((require('fs').statSync(process.argv[1]).size/1048576).toFixed(1))" "$f")
             echo "| $(basename "$f") | $size |" | tee -a "$GITHUB_STEP_SUMMARY"
           done
 
-      - name: Locate the packaged app
+      - name: Verify the packaged app (asar layout, fuses)
+        run: node scripts/packaged-app.mjs verify
+
+      - name: Install the .deb (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "kernel.apparmor_restrict_unprivileged_userns = $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)"
+          sudo apt-get install -y ./release/*.deb
+          test -f /etc/apparmor.d/kvox-desktop
+          sudo aa-status | grep -F kvox-desktop
+          dpkg -s kvox-desktop | head -n 12
+
+      - name: Prepare the app for Playwright
         id: app
         shell: bash
         run: |
-          case "$RUNNER_OS" in
-            Windows) exe="release/win-unpacked/KVox.exe" ;;
-            macOS)   exe="$(ls -d release/mac*/KVox.app | head -1)/Contents/MacOS/KVox" ;;
-            Linux)   exe="release/linux-unpacked/kvox-desktop" ;;
-          esac
-          test -f "$exe"
-          echo "executable=$PWD/$exe" >> "$GITHUB_OUTPUT"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            # The installed app, in place: its AppArmor profile names /opt/KVox/kvox-desktop.
+            sudo "$(command -v node)" scripts/packaged-app.mjs test-copy /opt/KVox/kvox-desktop --in-place
+            exe=/opt/KVox/kvox-desktop
+          else
+            exe="$(node scripts/packaged-app.mjs test-copy)"
+          fi
+          echo "executable=$exe" >> "$GITHUB_OUTPUT"
 
-      # Ubuntu 24.04 forbids unprivileged user namespaces through AppArmor, which
-      # Chromium's sandbox needs; the deb/AppImage profile is D6 (#587).
-      - name: Allow the Chromium sandbox (Linux)
-        if: runner.os == 'Linux'
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      - name: Smoke test (packaged app)
+      - name: E2E tests (packaged app)
         shell: bash
         env:
           KVOX_E2E_EXECUTABLE: ${{ steps.app.outputs.executable }}
@@ -130,7 +149,10 @@ jobs:
           path: |
             release/*.exe
             release/*.dmg
+            release/*.zip
             release/*.AppImage
             release/*.deb
+            release/*.yml
+            release/signing-*.json
           if-no-files-found: error
           retention-days: 7

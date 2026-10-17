@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { importLocalFile } from '../../src/main/import-file';
 import { startServer, type RunningServer } from '../../src/server/bootstrap';
+import { spawnNodeScript } from '../../src/server/database';
 import type { DesktopConnection, ImportOutcome } from '../../src/shared/protocol';
 import { ROOT, fakeCipher, removeQuietly } from './support/database';
 
@@ -64,7 +65,7 @@ beforeAll(async () => {
   server = await startServer({
     appRoot: ROOT,
     userDataDir,
-    nodeExecutable: process.execPath,
+    runNodeScript: spawnNodeScript(process.execPath),
     token: TOKEN,
     allowedOrigins: ['kvox://app'],
     log: (line) => logged.push(line),

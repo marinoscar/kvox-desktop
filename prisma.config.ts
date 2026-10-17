@@ -1,4 +1,4 @@
-import { defineConfig } from 'prisma/config';
+import type { PrismaConfig } from 'prisma/config';
 
 // =============================================================================
 // Prisma configuration of KVox Desktop
@@ -10,9 +10,13 @@ import { defineConfig } from 'prisma/config';
 // under `prisma/` is committed. Copied from the kvox bare host
 // (examples/bare-host/prisma.config.ts). The server sets `DATABASE_URL` to the
 // loopback socket of its PGlite before it runs `prisma migrate deploy`.
+//
+// No runtime import (a type only, unlike the bare host's `defineConfig`): in
+// the packaged app this file is read from `app.asar.unpacked`, a real folder
+// where `prisma/config` cannot be resolved (marinoscar/kvox#587).
 // =============================================================================
 
-export default defineConfig({
+export default {
   schema: 'prisma/schema',
   datasource: {
     url: process.env.DATABASE_URL ?? 'postgresql://postgres@127.0.0.1:5432/postgres',
@@ -20,4 +24,4 @@ export default defineConfig({
   migrations: {
     path: 'prisma/migrations',
   },
-});
+} satisfies PrismaConfig;
