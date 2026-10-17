@@ -44,7 +44,8 @@ export function createDesktopHost(connection: DesktopConnection): KvoxWebHost {
   const authorization = (): string => `Bearer ${connection.token}`;
   // Stable objects: the slices read them per render and memoise on them.
   const viewer = { userId: connection.userId, permissions: new Set(connection.permissions) };
-  const features = { graphEnabled: false };
+  // Mirrors the server's `ai.graphEnabled`, which Desktop declares ON and nothing turns off.
+  const features = { graphEnabled: true };
 
   const send = async (method: string, path: string, init: KvoxRequestInit | undefined, body?: BodyInit, json = false): Promise<Response> => {
     const response = await fetch(`${api}${buildKvoxUrl(path, init?.query)}`, {
@@ -118,7 +119,6 @@ export function createDesktopHost(connection: DesktopConnection): KvoxWebHost {
       entity: (id) => `/graph/entities/${id}`,
       conversation: (id) => `/ask/${id}`,
     },
-    // The graph is not part of this spike (D5).
     features: () => features,
   };
 }

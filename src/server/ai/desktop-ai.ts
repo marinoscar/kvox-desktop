@@ -55,6 +55,8 @@ import {
 interface SliceAiSettings {
   maxInputTokens: number | null;
   maxOutputTokens: number | null;
+  /** The connected-knowledge switch (absent in a namespace declared without it: off). */
+  graphEnabled?: boolean;
 }
 
 /** What a key status read answers (never the key). */
@@ -206,8 +208,8 @@ export class DesktopAi {
       policy: {
         provider,
         defaultModel: model,
-        // The graph is not mounted on Desktop yet (D5).
-        graphEnabled: false,
+        // The connected-knowledge switch of the `ai` namespace (on by default on Desktop).
+        graphEnabled: limits.graphEnabled === true,
         taskModels: {},
         // Chat Completions (the compatible servers' wire) takes no effort; OpenAI's own models do.
         reasoningEffort: provider === 'openai' ? 'medium' : 'none',

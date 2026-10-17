@@ -1,0 +1,46 @@
+{
+  "schema": "kvox.transcript/v1",
+  "transcript": {
+    "id": "tr_g03_platform_review",
+    "title": "Data platform review with Mark Chen",
+    "language": "en",
+    "durationMs": 10000,
+    "version": 1,
+    "author": null,
+    "createdAt": "2026-09-03T16:00:00.000Z",
+    "exportedAt": "2026-09-03T18:00:00.000Z",
+    "recordedAt": "2026-09-03T15:00:00.000Z",
+    "provider": {
+      "id": "assemblyai",
+      "model": "best"
+    },
+    "speakers": [
+      {
+        "id": "spk_a",
+        "displayName": "Mark Chen",
+        "talkTimeMs": 5000
+      },
+      {
+        "id": "spk_b",
+        "displayName": "Priya Shah",
+        "talkTimeMs": 5000
+      }
+    ],
+    "segments": [
+      {
+        "id": "seg_1",
+        "speakerId": "spk_a",
+        "startMs": 0,
+        "endMs": 5000,
+        "text": "Thanks for joining, Priya. Let us review the ingestion backlog."
+      },
+      {
+        "id": "seg_2",
+        "speakerId": "spk_b",
+        "startMs": 5000,
+        "endMs": 10000,
+        "text": "The backlog is down to twelve items, Mark."
+      }
+    ]
+  }
+}

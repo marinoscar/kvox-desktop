@@ -1,0 +1,46 @@
+{
+  "schema": "kvox.transcript/v1",
+  "transcript": {
+    "id": "tr_g02_standup",
+    "title": "Joe and Jenny standup",
+    "language": "en",
+    "durationMs": 10000,
+    "version": 1,
+    "author": null,
+    "createdAt": "2026-09-02T16:00:00.000Z",
+    "exportedAt": "2026-09-02T18:00:00.000Z",
+    "recordedAt": "2026-09-02T15:00:00.000Z",
+    "provider": {
+      "id": "assemblyai",
+      "model": "best"
+    },
+    "speakers": [
+      {
+        "id": "spk_a",
+        "displayName": "Joe Park",
+        "talkTimeMs": 5000
+      },
+      {
+        "id": "spk_b",
+        "displayName": "Jenny Kim",
+        "talkTimeMs": 5000
+      }
+    ],
+    "segments": [
+      {
+        "id": "seg_1",
+        "speakerId": "spk_a",
+        "startMs": 0,
+        "endMs": 5000,
+        "text": "Morning Jenny, quick standup before the release."
+      },
+      {
+        "id": "seg_2",
+        "speakerId": "spk_b",
+        "startMs": 5000,
+        "endMs": 10000,
+        "text": "Morning Joe. The release notes are ready."
+      }
+    ]
+  }
+}
