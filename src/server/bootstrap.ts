@@ -1,5 +1,7 @@
 import 'reflect-metadata';
 
+import { join } from 'node:path';
+
 import multipart from '@fastify/multipart';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
@@ -24,6 +26,7 @@ import { LocalFsObjectStore } from './ports/local-fs-object-store.js';
 import { PgSettings } from './ports/pg-settings.js';
 import { PgTableJobs } from './ports/pg-table-jobs.js';
 import { SafeStorageSecrets, type SecretCipher } from './ports/safe-storage-secrets.js';
+import { utilityProcessShaclRun } from './shacl-runner.js';
 import { LOCAL_USER_PERMISSIONS } from './permissions.js';
 import { LOCAL_USER_ID, seedDatabase } from './seed.js';
 
@@ -65,8 +68,10 @@ export interface StartServerOptions {
   appRoot: string;
   /** `app.getPath('userData')`. */
   userDataDir: string;
-  /** Runs the migration commands (a utility process each, forked by the main process). */
+  /** Runs the migration commands and the SHACL validations (a utility process each, forked by the main process). */
   runNodeScript: NodeScriptRunner;
+  /** The SHACL validation script; default `shacl-validate.js` beside this bundle (`src/main/shacl-validate.ts`). */
+  shaclScript?: string;
   /** The per-launch token. */
   token: string;
   /** Origins allowed to call the API (the renderer's). */
@@ -166,6 +171,12 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         objectStore,
         desktopAi,
         egress,
+        shaclRun: utilityProcessShaclRun({
+          appRoot: options.appRoot,
+          scriptPath: options.shaclScript ?? join(__dirname, 'shacl-validate.js'),
+          tmpDir: folder.tmp,
+          run: options.runNodeScript,
+        }),
         ports: {
           ai: { useValue: desktopAi.port },
           objectStore: { useValue: objectStore },

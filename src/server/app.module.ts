@@ -7,6 +7,7 @@ import { KvoxPortsModule, type KvoxPortBindings } from '@marinoscar/kvox-api/cor
 import { GraphModule } from '@marinoscar/kvox-api/graph';
 import { GraphExtractionModule } from '@marinoscar/kvox-api/graph-extraction';
 import { GraphRdfModule } from '@marinoscar/kvox-api/graph-rdf';
+import type { ShaclRun } from '@marinoscar/kvox-api/graph-rdf/shacl-runner';
 import { NotesModule } from '@marinoscar/kvox-api/notes';
 import { SearchIndexingModule, SearchModule } from '@marinoscar/kvox-api/search';
 import { TranscriptionModule } from '@marinoscar/kvox-api/transcription';
@@ -42,7 +43,9 @@ import { StorageObjectsController } from './storage-objects.controller.js';
 //   GraphExtractionModule `kg.extract` (on by default: a note that becomes ready
 //                        is extracted), resolution and the proposal review
 //   GraphRdfModule       RDF export and the SHACL-validated import (n3, jsonld,
-//                        rdf-validate-shacl)
+//                        rdf-validate-shacl); the validation runs in a utility
+//                        process (`shacl.run`: the RunAsNode fuse is off, so
+//                        the package's default spawn of the binary cannot work)
 //   AskModule            conversations and the `ask.respond` tool loop
 //   (marinoscar/kvox#586)
 //
@@ -66,6 +69,8 @@ export interface DesktopModuleOptions {
   desktopAi: DesktopAi;
   /** The egress guard whose allowlist the AI settings drive. */
   egress: EgressGuard;
+  /** Runs one SHACL validation of the graph import in a utility process (`shacl-runner.ts`). */
+  shaclRun: ShaclRun;
 }
 
 @Module({})
@@ -89,7 +94,7 @@ export function createDesktopModule(options: DesktopModuleOptions): DynamicModul
   const search = SearchModule.forRoot();
   const graph = GraphModule.forRoot({ schedules: false, peers: { transcripts, notes, search } });
   const extraction = GraphExtractionModule.forRoot({ peers: { graph, notes } });
-  const rdf = GraphRdfModule.forRoot({ schedules: false, peers: { graph, extraction, transcripts, notes } });
+  const rdf = GraphRdfModule.forRoot({ schedules: false, shacl: { run: options.shaclRun }, peers: { graph, extraction, transcripts, notes } });
   const ask = AskModule.forRoot({ peers: { graph, notes, search } });
 
   return {
