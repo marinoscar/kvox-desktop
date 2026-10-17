@@ -29,7 +29,9 @@ const AZURE = {
   AZURE_SIGNING_CERT_PROFILE: 'kvox-profile',
   AZURE_SIGNING_PUBLISHER_NAME: 'Oscar Marin',
 };
-const APPLE = { CSC_LINK: 'c2VjcmV0LWNlcnQ=', CSC_KEY_PASSWORD: 'p4ss', APPLE_API_KEY: '/tmp/key.p8', APPLE_API_KEY_ID: 'KEYID', APPLE_API_ISSUER: 'issuer-uuid' };
+// Placeholders (each value is its own name, so a leaked value would be recognisable in a notice).
+const placeholders = (names: string[]) => Object.fromEntries(names.map((name) => [name, `placeholder-${name.toLowerCase()}`]));
+const APPLE = placeholders(['CSC_LINK', 'CSC_KEY_PASSWORD', 'APPLE_API_KEY', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER']);
 
 describe('signingPlan', () => {
   it('builds unsigned without secrets, saying so on every platform', () => {
