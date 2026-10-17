@@ -1,5 +1,6 @@
 import type { FromServer, ToServer } from '../shared/protocol';
 import { startServer, type RunningServer } from './bootstrap.js';
+import { MainBridge } from './main-bridge.js';
 
 // =============================================================================
 // The server utility process (Electron `utilityProcess.fork`)
@@ -8,17 +9,27 @@ import { startServer, type RunningServer } from './bootstrap.js';
 // Waits for the main process's `start` message, starts the local server and
 // answers `ready` with its port, or `error`. On `stop` it closes the job loop,
 // the server, Prisma and PGlite (which flushes its files) and answers `stopped`.
+// `secrets-result` messages answer the server's `safeStorage` requests.
 // =============================================================================
 
 const port = process.parentPort;
 const send = (message: FromServer): void => port.postMessage(message);
+const bridge = new MainBridge(send);
 
 let server: RunningServer | undefined;
 
 port.on('message', (event: { data: ToServer }) => {
   const message = event.data;
+  if (bridge.handle(message)) return;
   if (message.type === 'start') {
-    startServer({ ...message, log: (line) => send({ type: 'log', line }) })
+    startServer({
+      ...message,
+      log: (line) => send({ type: 'log', line }),
+      logError: (line) => send({ type: 'log', line, level: 'error' }),
+      cipher: bridge.cipher,
+      showNotification: (title, body) => bridge.notify(title, body),
+      requestRestart: (reason) => bridge.restart(reason),
+    })
       .then((running) => {
         server = running;
         send({ type: 'ready', port: running.port, userId: running.userId, permissions: [...running.permissions], timings: running.timings });

@@ -2,9 +2,11 @@ import { randomBytes } from 'node:crypto';
 import { join, normalize, relative, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { BrowserWindow, app, ipcMain, net, protocol, session, utilityProcess, type UtilityProcess } from 'electron';
+import { BrowserWindow, Notification, app, dialog, ipcMain, net, protocol, session, utilityProcess, type UtilityProcess } from 'electron';
 
 import type { DesktopConnection, FromServer, ToServer } from '../shared/protocol';
+import { runSecretOp, secretStorageStatus } from './secret-storage';
+import { readShellSettings, writeShellSettings } from './shell-settings';
 
 // =============================================================================
 // The Electron main process of KVox Desktop (marinoscar/kvox#582)
@@ -21,8 +23,15 @@ import type { DesktopConnection, FromServer, ToServer } from '../shared/protocol
 //      call, `kvoxDesktop.connection()`, answering the port and the token.
 //   3. THE EGRESS GUARD: every request the window's session makes to anything but
 //      loopback, `kvox:`, `file:` (the `kvox:` handler reads the app's own files),
-//      `data:`, `blob:` or `devtools:` is cancelled and logged
-//      (ADR-0004: the AI provider, called from the server, is the only egress).
+//      `data:`, `blob:` or `devtools:` is cancelled, counted and logged at error
+//      level with the host only (ADR-0004: the AI provider, called from the
+//      server, is the only egress; the server has its own guard,
+//      `src/server/egress-guard.ts`).
+//   4. WHAT ONLY THIS PROCESS HAS, for the server (marinoscar/kvox#583):
+//      `safeStorage` for its secrets port, `Notification` for its notify port,
+//      and a restart of the server after a restore was staged (the window
+//      reloads onto the new server). For the window: the native backup dialogs
+//      and the plaintext-secrets consent (`settings.json`).
 //
 // The user data folder is `app.getPath('userData')` (KVox under the OS's
 // application-data folder). `KVOX_USER_DATA_DIR` overrides it, for tests.
@@ -46,6 +55,12 @@ function log(line: string): void {
   console.log(`[kvox] ${line}`);
 }
 
+function logError(line: string): void {
+  console.error(`[kvox] ERROR ${line}`);
+}
+
+const settingsPath = (): string => join(app.getPath('userData'), 'settings.json');
+
 /** The renderer's origin: the dev server's in `electron-vite dev`, else `kvox://app`. */
 function rendererOrigin(): string {
   const devUrl = process.env.ELECTRON_RENDERER_URL;
@@ -63,8 +78,20 @@ function startServer(): Promise<DesktopConnection> {
 
   return new Promise((resolve, reject) => {
     child.on('message', (message: FromServer) => {
-      if (message.type === 'log') log(message.line);
-      else if (message.type === 'ready') {
+      if (message.type === 'log') (message.level === 'error' ? logError : log)(`server: ${message.line.replace(/^server: /, '')}`);
+      else if (message.type === 'secrets') {
+        let reply: ToServer;
+        try {
+          reply = { type: 'secrets-result', id: message.id, ok: true, value: runSecretOp(message, settingsPath()) };
+        } catch (error) {
+          reply = { type: 'secrets-result', id: message.id, ok: false, error: error instanceof Error ? error.message : String(error) };
+        }
+        child.postMessage(reply);
+      } else if (message.type === 'notify') {
+        if (Notification.isSupported()) new Notification({ title: message.title, body: message.body }).show();
+      } else if (message.type === 'restart') {
+        void restartServer(message.reason);
+      } else if (message.type === 'ready') {
         log(`server ready on 127.0.0.1:${message.port} after ${Math.round(performance.now() - launchedAt)} ms since launch`);
         resolve({ baseUrl: `http://127.0.0.1:${message.port}`, token, userId: message.userId, permissions: message.permissions });
       } else if (message.type === 'error') {
@@ -73,7 +100,7 @@ function startServer(): Promise<DesktopConnection> {
       }
     });
     child.on('exit', (code) => {
-      server = undefined;
+      if (server === child) server = undefined;
       if (!stopping) {
         log(`server exited unexpectedly (code ${code})`);
         reject(new Error(`The local server exited (code ${code})`));
@@ -87,6 +114,7 @@ function startServer(): Promise<DesktopConnection> {
       nodeExecutable: process.execPath,
       token,
       allowedOrigins: [rendererOrigin()],
+      appVersion: app.getVersion(),
     };
     child.postMessage(start);
   });
@@ -112,6 +140,24 @@ function stopServer(): Promise<void> {
   return stopping;
 }
 
+let restarting = false;
+
+/** Stops the server and starts a new one (a restore is staged), then reloads the window onto it. */
+async function restartServer(reason: string): Promise<void> {
+  if (restarting) return;
+  restarting = true;
+  log(`restarting the server: ${reason}`);
+  try {
+    await stopServer();
+    stopping = undefined;
+    connection = startServer();
+    await connection.catch(() => undefined);
+    mainWindow?.webContents.reload();
+  } finally {
+    restarting = false;
+  }
+}
+
 /** Serves `out/renderer` at `kvox://app/`, falling back to index.html for client routes. */
 function registerAppProtocol(): void {
   const root = join(__dirname, '../renderer');
@@ -127,7 +173,9 @@ function registerAppProtocol(): void {
   });
 }
 
-/** Cancels every request of the default session that is not local. */
+let windowEgressBlocked = 0;
+
+/** Cancels every request of the default session that is not local; logs the host only. */
 function installEgressGuard(): void {
   const devHost = process.env.ELECTRON_RENDERER_URL ? new URL(process.env.ELECTRON_RENDERER_URL).hostname : null;
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
@@ -136,8 +184,43 @@ function installEgressGuard(): void {
       ['kvox:', 'file:', 'data:', 'blob:', 'devtools:', 'chrome-extension:'].includes(url.protocol) ||
       url.hostname === '127.0.0.1' ||
       (devHost !== null && url.hostname === devHost);
-    if (!local) log(`egress blocked: ${url.protocol}//${url.host}`);
+    if (!local) {
+      windowEgressBlocked += 1;
+      logError(`window: egress blocked: ${url.hostname || url.protocol} (${windowEgressBlocked} blocked since start-up)`);
+    }
     callback({ cancel: !local });
+  });
+}
+
+/** The window's requests to the shell besides the connection. */
+function registerShellIpc(): void {
+  ipcMain.handle('kvox:data-folder', () => app.getPath('userData'));
+  ipcMain.handle('kvox:choose-backup-target', async () => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const options = {
+      title: 'Export data',
+      defaultPath: join(app.getPath('documents'), `KVox-${stamp}.kvoxbackup`),
+      filters: [{ name: 'KVox backup', extensions: ['kvoxbackup'] }],
+    };
+    const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
+    return result.canceled || !result.filePath ? null : result.filePath;
+  });
+  ipcMain.handle('kvox:choose-backup-source', async () => {
+    const options = {
+      title: 'Restore data',
+      properties: ['openFile' as const],
+      filters: [{ name: 'KVox backup', extensions: ['kvoxbackup'] }],
+    };
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+  ipcMain.handle('kvox:secret-storage', () => secretStorageStatus(settingsPath()));
+  ipcMain.handle('kvox:accept-plaintext-secrets', (_event, accepted: unknown) => {
+    const settings = readShellSettings(settingsPath());
+    settings.secrets.allowPlaintext = accepted === true;
+    writeShellSettings(settingsPath(), settings);
+    log(`secrets: plaintext storage ${settings.secrets.allowPlaintext ? 'accepted' : 'withdrawn'} by the user`);
+    return secretStorageStatus(settingsPath());
   });
 }
 
@@ -181,6 +264,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   ipcMain.handle('kvox:connection', () => connection);
+  registerShellIpc();
 
   void app.whenReady().then(() => {
     installEgressGuard();

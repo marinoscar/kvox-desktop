@@ -1,4 +1,5 @@
-// Copied from marinoscar/kvox examples/bare-host/src/ports/pg-table-jobs.ts (kvox commit in vendor/kvox/SOURCE.json). A host binding; keep it in step with the bare host.
+// From marinoscar/kvox examples/bare-host/src/ports/pg-table-jobs.ts (kvox commit in vendor/kvox/SOURCE.json). A host binding.
+// Desktop adds what the bare host left out (marinoscar/kvox#583): see "WHAT DESKTOP ADDS" below.
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -43,14 +44,42 @@ import {
 // ONE session: a handler that queries the pool while a transaction is open on
 // the pool's only connection would wait forever.
 //
-// WHAT IS NOT HERE (Desktop decides): `maxRuntimeMs` is not enforced (a handler
-// that hangs hangs the drain), a failed attempt is retried at once instead of
-// with a back-off, and a crash leaves a `running` row that nothing resets. The
-// platform queue has a lease and a reaper for exactly those.
+// WHAT DESKTOP ADDS (the bare host left these to the host; the platform queue
+// has a lease and a reaper for them):
+//
+//   - `maxRuntimeMs`: an attempt that outlives its profile's limit (default
+//     {@link DEFAULT_MAX_RUNTIME_MS}) fails with a timeout, its `AbortSignal`
+//     (`job.signal`, for a handler that looks) is aborted, and the drain moves
+//     on. A handler that ignores the signal keeps running detached; its outcome
+//     is discarded.
+//   - BACK-OFF: a failed attempt that has attempts left waits
+//     `base * 2^(attempts-1)` (capped) before it is claimable again.
+//   - CRASH RECOVERY: {@link PgTableJobs.recoverInterrupted}, called once at
+//     start-up before the loop, finds the rows a killed process left `running`.
+//     One with attempts left goes back to `pending`; one without is `failed`
+//     and its settled listeners run, so the slice marks its subject failed
+//     instead of showing it as working forever.
+//   - CONCURRENCY ONE: the runner claims and runs one job at a time, AI or not
+//     (a laptop, one PGlite session, the user's own provider limits).
+//
+// A rate-limited attempt (`KvoxRateLimitError`) still defers without spending
+// an attempt, and dedup is still `jobs_active_dedup_uniq_idx`.
 // =============================================================================
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_RATE_LIMIT_MS = 5000;
+/** The runtime limit of a handler whose profile names none. */
+export const DEFAULT_MAX_RUNTIME_MS = 15 * 60 * 1000;
+/** What a recovered row records as its last error. */
+export const INTERRUPTED_ERROR = 'Interrupted: KVox stopped while this job was running';
+
+/** The error an attempt fails with when it outlives its `maxRuntimeMs`. */
+export class KvoxJobTimeoutError extends Error {
+  constructor(type: string, maxRuntimeMs: number) {
+    super(`Job ${type} ran longer than its limit of ${maxRuntimeMs} ms`);
+    this.name = 'KvoxJobTimeoutError';
+  }
+}
 
 /** Options of {@link PgTableJobs}. */
 export interface PgTableJobsOptions {
@@ -58,6 +87,21 @@ export interface PgTableJobsOptions {
   dataDir: string;
   /** The organization stamped on every job (`jobs.org_id`; `null` for none). */
   orgId?: string | null;
+  /** The first retry's delay; it doubles per attempt. Default 5 s. */
+  backoffBaseMs?: number;
+  /** The longest retry delay. Default 5 min. */
+  backoffMaxMs?: number;
+  /** Receives one line per recovered row and per timeout (ids and types only). */
+  log?: (line: string) => void;
+}
+
+/** What {@link PgTableJobs.describeJob} answers. */
+export interface JobDescription {
+  id: string;
+  type: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  attempts: number;
+  lastError: string | null;
 }
 
 /** Options of {@link PgTableJobs.drain}. */
@@ -107,6 +151,9 @@ export class PgTableJobs implements KvoxJobsPort {
   private readonly listeners: Array<(event: KvoxJobSettledEvent) => void> = [];
   private readonly orgId: string | null;
   private readonly tempDir: string;
+  private readonly backoffBaseMs: number;
+  private readonly backoffMaxMs: number;
+  private readonly log: (line: string) => void;
   private timer: NodeJS.Timeout | null = null;
   /** Drains run one after another: the background loop and a test never claim at the same time. */
   private chain: Promise<unknown> = Promise.resolve();
@@ -117,6 +164,9 @@ export class PgTableJobs implements KvoxJobsPort {
   ) {
     this.orgId = options.orgId ?? null;
     this.tempDir = resolve(options.dataDir, 'tmp');
+    this.backoffBaseMs = options.backoffBaseMs ?? 5000;
+    this.backoffMaxMs = options.backoffMaxMs ?? 5 * 60 * 1000;
+    this.log = options.log ?? ((line) => this.logger.log(line));
     // This process's scratch space: whatever an earlier process left is garbage.
     rmSync(this.tempDir, { recursive: true, force: true });
     mkdirSync(this.tempDir, { recursive: true });
@@ -236,6 +286,51 @@ export class PgTableJobs implements KvoxJobsPort {
     return join(this.tempDir, `${randomUUID()}${suffix}`);
   }
 
+  /** One job's state and last error, for the host's own routes (the backup card). */
+  async describeJob(jobId: string): Promise<JobDescription | null> {
+    if (!/^[0-9a-f-]{36}$/i.test(jobId)) return null;
+    const rows = await this.prisma.$queryRaw<
+      Array<{ id: string; type: string; status: JobDescription['status']; attempts: number; last_error: string | null }>
+    >(Prisma.sql`SELECT id::text AS id, type, status::text AS status, attempts, last_error FROM jobs WHERE id = ${jobId}::uuid`);
+    const row = rows[0];
+    return row ? { id: row.id, type: row.type, status: row.status, attempts: row.attempts, lastError: row.last_error } : null;
+  }
+
+  // -- crash recovery -------------------------------------------------------------
+
+  /**
+   * Settles the rows an earlier process left `running` (it was killed, or the
+   * machine lost power). Call it once, after every handler is registered and
+   * before {@link start}: nothing of this process is running yet, so every
+   * `running` row is an orphan.
+   *
+   * @returns how many rows went back to `pending` and how many failed.
+   */
+  async recoverInterrupted(): Promise<{ requeued: number; failed: number }> {
+    const orphans = await this.prisma.$queryRaw<ClaimedRow[]>(Prisma.sql`
+      SELECT id::text AS id, type, subject_type, subject_id, payload, attempts, org_id::text AS org_id
+        FROM jobs WHERE status = 'running'::"JobStatus" ORDER BY created_at`);
+    let requeued = 0;
+    let failed = 0;
+    for (const row of orphans) {
+      const maxAttempts = this.handlers.get(row.type)?.profile?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+      if (row.attempts < maxAttempts) {
+        await this.prisma.$executeRaw(Prisma.sql`
+          UPDATE jobs SET status = 'pending'::"JobStatus", started_at = NULL, scheduled_for = NULL, last_error = ${INTERRUPTED_ERROR}
+           WHERE id = ${row.id}::uuid AND status = 'running'::"JobStatus"`);
+        requeued += 1;
+      } else {
+        await this.prisma.$executeRaw(Prisma.sql`
+          UPDATE jobs SET status = 'failed'::"JobStatus", finished_at = now(), last_error = ${INTERRUPTED_ERROR}
+           WHERE id = ${row.id}::uuid AND status = 'running'::"JobStatus"`);
+        this.settle(row, 'failed', INTERRUPTED_ERROR);
+        failed += 1;
+      }
+      this.log(`jobs: recovered interrupted job ${row.id} (${row.type}, attempt ${row.attempts} of ${maxAttempts})`);
+    }
+    return { requeued, failed };
+  }
+
   // -- running ------------------------------------------------------------------
 
   /** Starts the background loop: a drain every `intervalMs`. */
@@ -308,11 +403,28 @@ export class PgTableJobs implements KvoxJobsPort {
       orgId: row.org_id,
     };
 
+    const maxRuntimeMs = handler.profile?.maxRuntimeMs ?? DEFAULT_MAX_RUNTIME_MS;
+    const controller = new AbortController();
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        const error = new KvoxJobTimeoutError(row.type, maxRuntimeMs);
+        controller.abort(error);
+        this.log(`jobs: job ${row.id} (${row.type}) timed out after ${maxRuntimeMs} ms`);
+        reject(error);
+      }, maxRuntimeMs);
+    });
+    // `signal` is not part of KvoxJob: an extra a handler may read, ignored by the rest.
+    const attempt = handler.process(Object.assign(job, { signal: controller.signal }));
+    // The outcome of an attempt that timed out is discarded, its rejection included.
+    attempt.catch(() => undefined);
     try {
-      await handler.process(job);
+      await Promise.race([attempt, timeout]);
     } catch (error) {
       await this.failed(row, handler, error);
       return;
+    } finally {
+      clearTimeout(timer);
     }
     await this.prisma.$executeRaw(Prisma.sql`
       UPDATE jobs SET status = 'succeeded'::"JobStatus", finished_at = now(), last_error = NULL
@@ -335,8 +447,11 @@ export class PgTableJobs implements KvoxJobsPort {
     const message = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
     const terminal = row.attempts >= (handler.profile?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
     if (!terminal) {
+      const delayMs = Math.min(this.backoffBaseMs * 2 ** Math.max(row.attempts - 1, 0), this.backoffMaxMs);
       await this.prisma.$executeRaw(Prisma.sql`
-        UPDATE jobs SET status = 'pending'::"JobStatus", last_error = ${message} WHERE id = ${row.id}::uuid`);
+        UPDATE jobs SET status = 'pending'::"JobStatus", last_error = ${message},
+               scheduled_for = now() + (${delayMs} * interval '1 millisecond')
+         WHERE id = ${row.id}::uuid`);
       return;
     }
     await this.prisma.$executeRaw(Prisma.sql`

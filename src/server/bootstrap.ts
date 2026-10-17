@@ -1,37 +1,56 @@
 import 'reflect-metadata';
 
-import { join } from 'node:path';
-
 import multipart from '@fastify/multipart';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 
-import { createFakeKvoxAi, createRecordingKvoxNotify } from '@marinoscar/kvox-api/testing';
+import { KvoxEventEmitterEvents } from '@marinoscar/kvox-api/core';
+import { createFakeKvoxAi } from '@marinoscar/kvox-api/testing';
 
 import { createDesktopModule } from './app.module.js';
-import { createPrismaClient, startDatabase } from './database.js';
-import { FileSettings } from './ports/file-settings.js';
+import { applyPendingRestore, discardPreviousData, shippedMigrations } from './backup/backup.js';
+import { registerBackupJobs } from './backup/backup-jobs.js';
+import { dataFolder } from './data-folder.js';
+import { PGLITE_EXTENSIONS, createPrismaClient, startDatabase } from './database.js';
+import { EgressGuard } from './egress-guard.js';
+import { DesktopNotify } from './ports/desktop-notify.js';
+import { JsonlAudit } from './ports/jsonl-audit.js';
 import { LaunchTokenIdentity } from './ports/launch-token-identity.js';
 import { LocalFsObjectStore } from './ports/local-fs-object-store.js';
-import { MemorySecrets } from './ports/memory-secrets.js';
+import { PgSettings } from './ports/pg-settings.js';
 import { PgTableJobs } from './ports/pg-table-jobs.js';
+import { SafeStorageSecrets, type SecretCipher } from './ports/safe-storage-secrets.js';
 import { LOCAL_USER_PERMISSIONS } from './permissions.js';
 import { LOCAL_USER_ID, seedDatabase } from './seed.js';
 
 // =============================================================================
-// Starting the local server (marinoscar/kvox#582)
+// Starting the local server (marinoscar/kvox#582, #583)
 // =============================================================================
 //
 // The bare host's bootstrap (examples/bare-host/src/bootstrap.ts) in an Electron
-// utility process: PGlite under `<userData>/db`, the objects, settings and
-// scratch files under `<userData>`, Nest on Fastify listening on 127.0.0.1 at a
-// port the system picks, every route behind the per-launch token.
+// utility process: PGlite under `<userData>/db`, the vault, logs and secrets
+// under `<userData>` (`data-folder.ts`), Nest on Fastify listening on 127.0.0.1
+// at a port the system picks, every route behind the per-launch token.
 //
-// D1 BINDINGS (what later steps replace):
-//   ai        createFakeKvoxAi (a fixed note body, no embeddings)  -> D3 (#584)
-//   secrets   MemorySecrets                                        -> D2 OS keychain (#583)
-//   notify    createRecordingKvoxNotify                            -> D2 OS notifications
+// THE PORTS (one file each under `ports/`; ADR-0001: they are the only
+// Desktop-specific backend code):
+//   objectStore  LocalFsObjectStore   <userData>/vault, rows in storage_objects
+//   jobs         PgTableJobs          the jobs table, timeouts, back-off, crash recovery
+//   identity     LaunchTokenIdentity  the seeded user, the per-launch token
+//   settings     PgSettings           system_settings / user_settings
+//   secrets      SafeStorageSecrets   safeStorage blobs in secrets.bin (via main)
+//   notify       DesktopNotify        an OS notification (via main), no content
+//   events       KvoxEventEmitterEvents (the package default, bound explicitly)
+//   audit        JsonlAudit           logs/audit.log, ids and counts
+//   prisma       the PGlite-backed client, one connection
+//   ai           createFakeKvoxAi                                  -> D3 (#584)
+//
+// THE ORDER: egress guard first (nothing may leave before it), then a staged
+// restore (before PGlite opens the folder), the database, the seed, Nest (the
+// slices register their handlers and namespaces), the backup handlers, crash
+// recovery of the job table, and only then the job loop.
 // =============================================================================
 
 /** What the fake model "writes" for every note (the smoke test looks for the last line). */
@@ -56,6 +75,16 @@ export interface StartServerOptions {
   allowedOrigins: readonly string[];
   /** Receives progress lines. */
   log: (line: string) => void;
+  /** Receives error lines (blocked egress). Defaults to `log`. */
+  logError?: (line: string) => void;
+  /** The app's version, recorded in a backup. */
+  appVersion: string;
+  /** Electron `safeStorage`, through the main process. */
+  cipher: SecretCipher;
+  /** Shows an OS notification (the main process). */
+  showNotification: (title: string, body: string) => void;
+  /** Asks the main process to restart the server (a restore is staged). */
+  requestRestart: (reason: string) => void;
 }
 
 /** A running local server. */
@@ -64,18 +93,26 @@ export interface RunningServer {
   readonly userId: string;
   readonly permissions: readonly string[];
   readonly timings: Record<string, number>;
+  readonly egress: EgressGuard;
   close(): Promise<void>;
 }
 
 /** Brings the database up, seeds it, boots Nest on Fastify and listens on loopback. */
 export async function startServer(options: StartServerOptions): Promise<RunningServer> {
   const started = performance.now();
+  const egress = new EgressGuard({ logError: options.logError ?? options.log });
+  egress.install();
+  options.log(`server: egress guard on, allowing loopback and ${egress.allowedHosts.join(', ')}`);
+
+  const folder = dataFolder(options.userDataDir);
+  const restored = await applyPendingRestore(folder, PGLITE_EXTENSIONS, options.log).catch(() => false);
   const database = await startDatabase({
     appRoot: options.appRoot,
-    dataDir: join(options.userDataDir, 'db'),
+    dataDir: folder.db,
     nodeExecutable: options.nodeExecutable,
     log: options.log,
   });
+  if (restored) await discardPreviousData(folder);
   const prisma = createPrismaClient(database);
   const timings: Record<string, number> = { ...database.timings };
 
@@ -85,9 +122,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     const orgId = await seedDatabase(prisma);
 
     let baseUrl = '';
-    const objectStore = new LocalFsObjectStore({ prisma, dataDir: options.userDataDir, orgId, baseUrl: () => baseUrl });
-    jobs = new PgTableJobs(prisma, { dataDir: options.userDataDir, orgId });
-    const settings = new FileSettings(join(options.userDataDir, 'settings.json'));
+    jobs = new PgTableJobs(prisma, { dataDir: options.userDataDir, orgId, log: options.log });
+    const objectStore = new LocalFsObjectStore({ prisma, vaultDir: folder.vault, partsDir: folder.uploadParts, orgId, baseUrl: () => baseUrl });
+    const settings = new PgSettings(prisma);
     // THE `ai` SYSTEM NAMESPACE IS THE HOST'S TO DECLARE (kvox-ports.md 3.8); the slices only read it.
     settings.registerNamespace({
       scope: 'system',
@@ -115,9 +152,11 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
           objectStore: { useValue: objectStore },
           jobs: { useValue: jobs },
           identity: { useValue: identity },
-          notify: { useValue: createRecordingKvoxNotify() },
+          notify: { useValue: new DesktopNotify({ show: (n) => options.showNotification(n.title, n.body), appName: 'KVox Desktop', log: options.log }) },
           settings: { useValue: settings },
-          secrets: { useValue: new MemorySecrets() },
+          secrets: { useValue: new SafeStorageSecrets({ file: folder.secrets, cipher: options.cipher, log: options.log }) },
+          events: { useValue: new KvoxEventEmitterEvents() },
+          audit: { useValue: new JsonlAudit(folder.auditLog) },
           prisma: { useValue: prisma as never },
         },
       }),
@@ -145,6 +184,23 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     const port = typeof address === 'object' && address ? address.port : 0;
     baseUrl = `http://127.0.0.1:${port}`;
 
+    registerBackupJobs(jobs, {
+      folder,
+      appVersion: options.appVersion,
+      dumpDatabase: () => database.dump(),
+      migrations: async () =>
+        (
+          await prisma.$queryRaw<Array<{ name: string }>>(Prisma.sql`
+            SELECT migration_name AS name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name`)
+        ).map((row) => row.name),
+      knownMigrations: () => shippedMigrations(options.appRoot),
+      onRestoreStaged: () => options.requestRestart('a restore is staged'),
+      log: options.log,
+    });
+    const recovered = await jobs.recoverInterrupted();
+    if (recovered.requeued + recovered.failed > 0) {
+      options.log(`jobs: ${recovered.requeued} interrupted job(s) queued again, ${recovered.failed} failed`);
+    }
     jobs.start();
     timings.serverStart = Math.round(performance.now() - started);
     options.log(`server: listening on ${baseUrl} (${JSON.stringify(timings)})`);
@@ -155,6 +211,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       userId: LOCAL_USER_ID,
       permissions: LOCAL_USER_PERMISSIONS,
       timings,
+      egress,
       async close() {
         await running.jobs.stop();
         await running.app.close();
