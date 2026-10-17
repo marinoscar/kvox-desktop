@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements of KVox Desktop (marinoscar/kvox#587).
+
+  Only one: V8 compiles JavaScript and WebAssembly (PGlite is PostgreSQL in
+  WebAssembly) to machine code at run time, which needs MAP_JIT pages.
+  Not granted: unsigned executable memory, disabled library validation,
+  dyld environment variables, microphone, camera, network server.
+-->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+  </dict>
+</plist>

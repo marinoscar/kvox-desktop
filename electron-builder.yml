@@ -1,17 +1,33 @@
 # =============================================================================
-# electron-builder: unsigned installers (D1 spike; signing and updates are D6, #587)
+# electron-builder: KVox Desktop installers (marinoscar/kvox#587)
 # =============================================================================
 #
-# asar is OFF for the spike: the server runs `prisma migrate deploy` and
-# `kvox-db check` as child processes that read `prisma/`, `prisma.config.ts`
-# and the Prisma schema engine (a native binary) from the app directory. Moving
-# to asar needs `asarUnpack` for those; D6 measures it.
+# Built by `npm run dist` (scripts/dist.mjs), which adds the signing identity
+# when its secrets exist and builds unsigned installers when they do not.
+# Released by .github/workflows/release.yml on a `v*` tag.
+#
+#   Windows  NSIS, per user (no admin), x64 + arm64 in one installer
+#   macOS    dmg (install) + zip (updates), hardened runtime, notarized
+#   Linux    deb (recommended; ships the AppArmor profile) + AppImage
+#
+# ASAR ON. The app is one archive, `app.asar`. Unpacked beside it
+# (`app.asar.unpacked`), because a process is started from them: the
+# migrations and the Prisma config (the Prisma CLI runs the schema engine with
+# its working directory there) and the schema engine itself, a native binary.
+# src/server/database.ts reads them from there. scripts/packaged-app.mjs
+# verifies this layout and the fuses in CI.
+# =============================================================================
 appId: cr.marin.kvox.desktop
 productName: KVox
+copyright: Copyright © 2026 Oscar Marin
 directories:
   output: release
   buildResources: build
-asar: false
+asar: true
+asarUnpack:
+  - prisma/**
+  - prisma.config.ts
+  - node_modules/@prisma/engines/schema-engine*
 files:
   - out/**
   - prisma/**
@@ -21,31 +37,80 @@ files:
   # The query compilers of the databases this app does not run. (Prisma Studio
   # and `prisma dev`, ~80 MB, stay: the Prisma CLI loads them eagerly.)
   - "!node_modules/@prisma/client/runtime/*{cockroachdb,mysql,sqlite,sqlserver}*"
-# The generated Prisma client (node_modules/.prisma) is not a package and a dot
-# folder, so the file walk skips it: copy it next to @prisma/client by hand.
-extraResources:
+  # The generated Prisma client (node_modules/.prisma) is not a package and a
+  # dot folder, so the file walk skips it: copied into the archive by hand. (Not
+  # as an extraResource: a `resources/app` folder would be loaded INSTEAD of
+  # app.asar.)
   - from: node_modules/.prisma
-    to: app/node_modules/.prisma
+    to: node_modules/.prisma
 npmRebuild: false
-publish: null
+# Fuses: flipped in the binary right before signing.
+#   runAsNode off            the migrations run as utility processes
+#                            (src/main/node-scripts.ts): ELECTRON_RUN_AS_NODE
+#                            would let anyone run code as the signed KVox and
+#                            read its safeStorage key.
+#   nodeOptions off, nodeCliInspectArguments off
+#                            no NODE_OPTIONS, no --inspect. (The e2e tests drive
+#                            a COPY with --inspect turned back on:
+#                            scripts/packaged-app.mjs test-copy.)
+#   onlyLoadAppFromAsar on, embeddedAsarIntegrityValidation on (macOS, Windows)
+#   cookieEncryption on, grantFileProtocolExtraPrivileges off (the window is
+#                            served from kvox://)
+#   resetAdHocDarwinSignature: an unsigned macOS build keeps a valid ad-hoc
+#                            signature (Apple silicon runs nothing without one);
+#                            a signed build is re-signed right after anyway.
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  loadBrowserProcessSpecificV8Snapshot: false
+  grantFileProtocolExtraPrivileges: false
+  resetAdHocDarwinSignature: true
+# Update metadata (latest*.yml, app-update.yml) for electron-updater. Nothing is
+# uploaded by electron-builder (`--publish never`); release.yml uploads. The app
+# reads it only when the user turned on "Check for updates" (src/main/updates.ts).
+publish:
+  provider: github
+  owner: marinoscar
+  repo: kvox-desktop
+  releaseType: draft
 win:
   target:
     - target: nsis
-  artifactName: KVox-${version}-win-${arch}.${ext}
+  # Signing: scripts/dist.mjs adds azureSignOptions (Azure Trusted Signing).
 nsis:
   oneClick: false
   perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  # The user's data stays unless they tick it away: build/installer.nsh.
+  deleteAppDataOnUninstall: false
+  include: build/installer.nsh
+  artifactName: KVox-${version}-win-setup.${ext}
 mac:
   target:
     - target: dmg
-  identity: null
+    - target: zip
   category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Signing: scripts/dist.mjs (CSC_LINK, APPLE_API_KEY*), or identity=null.
   artifactName: KVox-${version}-mac-${arch}.${ext}
 linux:
   target:
-    - target: AppImage
     - target: deb
+    - target: AppImage
   executableName: kvox-desktop
   category: Office
   maintainer: Oscar Marin <oscar@marin.cr>
+  synopsis: Offline-first meeting notes and a personal knowledge graph
   artifactName: KVox-${version}-linux-${arch}.${ext}
+deb:
+  # Ubuntu 24.04 confines unprivileged user namespaces, which the Chromium
+  # sandbox needs; the profile grants them to /opt/KVox/kvox-desktop only.
+  appArmorProfile: build/linux/kvox-desktop.apparmor

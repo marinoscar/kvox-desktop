@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -36,10 +36,20 @@ import { PrismaClient } from '@prisma/client';
 // `backup/backup.ts`): PGlite is single-writer, so the data directory can only
 // be swapped while nothing has it open.
 //
-// The child processes run on the Electron binary in Node mode
-// (ELECTRON_RUN_AS_NODE), so a packaged app needs no separate Node. Prisma's
-// update check and telemetry are switched off: the AI provider is the only
-// egress the app may have.
+// The commands run as Electron utility processes, which the main process
+// forks for the server (`runScript`; utility processes cannot fork their own),
+// so a packaged app needs no separate Node and the binary's RunAsNode fuse can
+// stay off (marinoscar/kvox#587). Prisma's update check and telemetry are
+// switched off: the AI provider is the only egress the app may have.
+//
+// PACKAGED (asar on, marinoscar/kvox#587): `appRoot` is `resources/app.asar`.
+// Electron's Node mode reads the archive, so the scripts and their `require`s
+// resolve through the archive path; `prisma/` and `prisma.config.ts` are
+// unpacked (`asarUnpack`). What the Prisma CLI starts processes from must be
+// real folders and files: the working directory and the config (hence the
+// schema and migrations folders) are taken from `app.asar.unpacked`, and the
+// schema engine, a native binary, is unpacked too and named in
+// PRISMA_SCHEMA_ENGINE_BINARY.
 //
 // PGlite is ONE session: the Prisma pool is one connection (see the bare
 // host's notes on deadlocks in `pg-table-jobs.ts`).
@@ -65,10 +75,23 @@ export interface DatabaseOptions {
   appRoot: string;
   /** The PGlite data directory, `<userData>/db`. */
   dataDir: string;
-  /** The Electron binary, run with ELECTRON_RUN_AS_NODE=1 for the child processes. */
-  nodeExecutable: string;
+  /** Runs the migration commands, each in its own process. */
+  runScript: NodeScriptRunner;
   /** Receives progress lines. */
   log: (line: string) => void;
+}
+
+/** A real directory for a child process: `app.asar.unpacked` when the app root is an archive. */
+export function workingDirectoryOf(appRoot: string): string {
+  return /\.asar$/i.test(appRoot) ? `${appRoot}.unpacked` : appRoot;
+}
+
+/** The unpacked Prisma schema engine of a packaged app; `undefined` in development (Prisma finds its own). */
+export function unpackedSchemaEngine(appRoot: string): string | undefined {
+  if (!/\.asar$/i.test(appRoot)) return undefined;
+  const dir = join(workingDirectoryOf(appRoot), 'node_modules', '@prisma', 'engines');
+  const engine = (existsSync(dir) ? readdirSync(dir) : []).find((name) => name.startsWith('schema-engine'));
+  return engine ? join(dir, engine) : undefined;
 }
 
 /** The `bin` script of an installed package. */
@@ -79,35 +102,62 @@ function binOf(appRoot: string, pkg: string, name: string): string {
   return join(dirname(manifestPath), typeof manifest.bin === 'string' ? manifest.bin : manifest.bin[name]);
 }
 
+/** A Node script to run as its own process (the migration commands). */
+export interface NodeScriptRequest {
+  script: string;
+  args: string[];
+  /** A real folder (never inside the archive). */
+  cwd: string;
+  env: Record<string, string>;
+}
+
+/** Runs a {@link NodeScriptRequest} to its end: the exit code and everything it printed. */
+export type NodeScriptRunner = (request: NodeScriptRequest) => Promise<{ code: number | null; output: string }>;
+
+/**
+ * A runner that spawns `nodeExecutable` (plain Node: the unit tests and the
+ * scripts). The app does not use it: its RunAsNode fuse is off, so the Electron
+ * binary cannot be Node; the server asks the main process for a utility process
+ * instead (`MainBridge.runNodeScript`).
+ */
+export function spawnNodeScript(nodeExecutable: string): NodeScriptRunner {
+  return (request) =>
+    new Promise((resolve, reject) => {
+      const child = spawn(nodeExecutable, [request.script, ...request.args], {
+        cwd: request.cwd,
+        env: { ...process.env, ...request.env },
+        windowsHide: true,
+      });
+      let output = '';
+      child.stdout.on('data', (chunk: Buffer) => (output += chunk.toString()));
+      child.stderr.on('data', (chunk: Buffer) => (output += chunk.toString()));
+      child.on('error', reject);
+      child.on('close', (code) => resolve({ code, output }));
+    });
+}
+
 /**
  * Runs a node script with a connection URL. ASYNC ON PURPOSE: PGlite lives in
  * this process, and a synchronous child-process call would block the event
  * loop that serves it.
  */
-function runNode(options: DatabaseOptions, label: string, script: string, args: string[], databaseUrl: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(options.nodeExecutable, [script, ...args], {
-      cwd: options.appRoot,
-      env: {
-        ...process.env,
-        ELECTRON_RUN_AS_NODE: '1',
-        DATABASE_URL: databaseUrl,
-        CHECKPOINT_DISABLE: '1',
-        PRISMA_HIDE_UPDATE_MESSAGE: '1',
-        PRISMA_DISABLE_WARNINGS: '1',
-        NO_UPDATE_NOTIFIER: '1',
-      },
-      windowsHide: true,
-    });
-    let output = '';
-    child.stdout.on('data', (chunk: Buffer) => (output += chunk.toString()));
-    child.stderr.on('data', (chunk: Buffer) => (output += chunk.toString()));
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code === 0) resolve(output);
-      else reject(new Error(`${label} failed (exit ${code}):\n${output}`));
-    });
+async function runNode(options: DatabaseOptions, label: string, script: string, args: string[], databaseUrl: string): Promise<string> {
+  const schemaEngine = unpackedSchemaEngine(options.appRoot);
+  const { code, output } = await options.runScript({
+    script,
+    args,
+    cwd: workingDirectoryOf(options.appRoot),
+    env: {
+      DATABASE_URL: databaseUrl,
+      CHECKPOINT_DISABLE: '1',
+      PRISMA_HIDE_UPDATE_MESSAGE: '1',
+      PRISMA_DISABLE_WARNINGS: '1',
+      NO_UPDATE_NOTIFIER: '1',
+      ...(schemaEngine ? { PRISMA_SCHEMA_ENGINE_BINARY: schemaEngine } : {}),
+    },
   });
+  if (code !== 0) throw new Error(`${label} failed (exit ${code}):\n${output}`);
+  return output;
 }
 
 /** A free loopback port (bound and released). */
@@ -168,7 +218,7 @@ export async function startDatabase(options: DatabaseOptions): Promise<DesktopDa
         options,
         'prisma migrate deploy',
         binOf(options.appRoot, 'prisma', 'prisma'),
-        ['migrate', 'deploy', '--config', join(options.appRoot, 'prisma.config.ts')],
+        ['migrate', 'deploy', '--config', join(workingDirectoryOf(options.appRoot), 'prisma.config.ts')],
         url,
       ),
     );

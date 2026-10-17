@@ -1,4 +1,5 @@
 import type { FromServer, SecretOp, SecretStorageStatus, ToServer } from '../shared/protocol';
+import type { NodeScriptRunner } from './database.js';
 import type { SecretCipher } from './ports/safe-storage-secrets.js';
 
 // =============================================================================
@@ -9,6 +10,9 @@ import type { SecretCipher } from './ports/safe-storage-secrets.js';
 // server reaches them over its utility-process port: a `secrets` request
 // carries an id and the main process answers `secrets-result` with the same
 // id. Requests time out after 30 s (a keyring prompt the user ignores).
+//
+// A migration command (`run-node`) is the same pattern without a timeout: the
+// main process forks a utility process, which ends on its own (marinoscar/kvox#587).
 // =============================================================================
 
 const TIMEOUT_MS = 30_000;
@@ -20,8 +24,15 @@ export class MainBridge {
 
   constructor(private readonly send: (message: FromServer) => void) {}
 
-  /** Routes a `secrets-result`; answers false for any other message. */
+  private readonly scripts = new Map<number, (result: { code: number | null; output: string }) => void>();
+
+  /** Routes a `secrets-result` or a `run-node-result`; answers false for any other message. */
   handle(message: ToServer): boolean {
+    if (message.type === 'run-node-result') {
+      this.scripts.get(message.id)?.({ code: message.code, output: message.output });
+      this.scripts.delete(message.id);
+      return true;
+    }
     if (message.type !== 'secrets-result') return false;
     const waiting = this.pending.get(message.id);
     if (!waiting) return true;
@@ -49,6 +60,15 @@ export class MainBridge {
     status: () => this.ask<SecretStorageStatus>({ op: 'status' }),
     encrypt: (value) => this.ask<string>({ op: 'encrypt', value }),
     decrypt: (value) => this.ask<string>({ op: 'decrypt', value }),
+  };
+
+  /** A Node script in a utility process of the main process's. */
+  readonly runNodeScript: NodeScriptRunner = (request) => {
+    const id = this.nextId++;
+    return new Promise((resolve) => {
+      this.scripts.set(id, resolve);
+      this.send({ type: 'run-node', id, ...request });
+    });
   };
 
   notify(title: string, body: string): void {

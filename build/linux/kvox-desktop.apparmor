@@ -1,0 +1,17 @@
+# AppArmor profile of KVox Desktop (marinoscar/kvox#587)
+#
+# Ubuntu 24.04 and later restrict unprivileged user namespaces
+# (kernel.apparmor_restrict_unprivileged_userns=1), which Chromium's sandbox
+# needs. This profile lets /opt/KVox/kvox-desktop, and only it, create them;
+# it confines nothing else (flags=(unconfined)). The .deb installs it to
+# /etc/apparmor.d/kvox-desktop and loads it when the system's AppArmor
+# supports ABI 4.0 (Ubuntu 22.04 does not, and needs no profile).
+abi <abi/4.0>,
+include <tunables/global>
+
+profile ${executable} "/opt/${sanitizedProductName}/${executable}" flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides. See local/README for details.
+  include if exists <local/${executable}>
+}

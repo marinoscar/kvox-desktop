@@ -27,6 +27,7 @@ port.on('message', (event: { data: ToServer }) => {
       log: (line) => send({ type: 'log', line }),
       logError: (line) => send({ type: 'log', line, level: 'error' }),
       cipher: bridge.cipher,
+      runNodeScript: bridge.runNodeScript,
       showNotification: (title, body) => bridge.notify(title, body),
       requestRestart: (reason) => bridge.restart(reason),
     })

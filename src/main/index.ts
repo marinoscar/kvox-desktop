@@ -5,8 +5,10 @@ import { pathToFileURL } from 'node:url';
 import { BrowserWindow, Notification, app, dialog, ipcMain, net, protocol, session, utilityProcess, type UtilityProcess } from 'electron';
 
 import type { DesktopConnection, FromServer, ToServer } from '../shared/protocol';
+import { runNodeScript } from './node-scripts';
 import { runSecretOp, secretStorageStatus } from './secret-storage';
 import { readShellSettings, writeShellSettings } from './shell-settings';
+import { DesktopUpdates } from './updates';
 
 // =============================================================================
 // The Electron main process of KVox Desktop (marinoscar/kvox#582)
@@ -31,7 +33,11 @@ import { readShellSettings, writeShellSettings } from './shell-settings';
 //      `safeStorage` for its secrets port, `Notification` for its notify port,
 //      and a restart of the server after a restore was staged (the window
 //      reloads onto the new server). For the window: the native backup dialogs
-//      and the plaintext-secrets consent (`settings.json`).
+//      and the plaintext-secrets consent (`settings.json`). And a utility
+//      process per migration command (`node-scripts.ts`): the RunAsNode fuse
+//      is off.
+//   5. OPT-IN UPDATES (`updates.ts`): off until the user turns them on; the
+//      updater's own session reaches GitHub Releases only while they are on.
 //
 // The user data folder is `app.getPath('userData')` (KVox under the OS's
 // application-data folder). `KVOX_USER_DATA_DIR` overrides it, for tests.
@@ -61,6 +67,8 @@ function logError(line: string): void {
 
 const settingsPath = (): string => join(app.getPath('userData'), 'settings.json');
 
+const updates = new DesktopUpdates({ settingsPath: settingsPath(), log, logError });
+
 /** The renderer's origin: the dev server's in `electron-vite dev`, else `kvox://app`. */
 function rendererOrigin(): string {
   const devUrl = process.env.ELECTRON_RENDERER_URL;
@@ -89,6 +97,8 @@ function startServer(): Promise<DesktopConnection> {
         child.postMessage(reply);
       } else if (message.type === 'notify') {
         if (Notification.isSupported()) new Notification({ title: message.title, body: message.body }).show();
+      } else if (message.type === 'run-node') {
+        void runNodeScript(message).then(({ code, output }) => child.postMessage({ type: 'run-node-result', id: message.id, code, output } satisfies ToServer));
       } else if (message.type === 'restart') {
         void restartServer(message.reason);
       } else if (message.type === 'ready') {
@@ -111,7 +121,6 @@ function startServer(): Promise<DesktopConnection> {
       type: 'start',
       appRoot: app.getAppPath(),
       userDataDir: app.getPath('userData'),
-      nodeExecutable: process.execPath,
       token,
       allowedOrigins: [rendererOrigin()],
       appVersion: app.getVersion(),
@@ -222,6 +231,9 @@ function registerShellIpc(): void {
     log(`secrets: plaintext storage ${settings.secrets.allowPlaintext ? 'accepted' : 'withdrawn'} by the user`);
     return secretStorageStatus(settingsPath());
   });
+  ipcMain.handle('kvox:updates', () => updates.status());
+  ipcMain.handle('kvox:set-updates-enabled', (_event, enabled: unknown) => updates.setEnabled(enabled === true));
+  ipcMain.handle('kvox:install-update', () => updates.installNow());
 }
 
 function createWindow(): void {
@@ -268,6 +280,7 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(() => {
     installEgressGuard();
+    updates.start();
     registerAppProtocol();
     connection = startServer();
     connection.catch(() => undefined);

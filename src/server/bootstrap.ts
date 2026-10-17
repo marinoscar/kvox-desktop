@@ -13,7 +13,7 @@ import { createDesktopModule } from './app.module.js';
 import { applyPendingRestore, discardPreviousData, shippedMigrations } from './backup/backup.js';
 import { registerBackupJobs } from './backup/backup-jobs.js';
 import { dataFolder } from './data-folder.js';
-import { PGLITE_EXTENSIONS, createPrismaClient, startDatabase } from './database.js';
+import { PGLITE_EXTENSIONS, createPrismaClient, startDatabase, type NodeScriptRunner } from './database.js';
 import { EgressGuard } from './egress-guard.js';
 import { DesktopNotify } from './ports/desktop-notify.js';
 import { JsonlAudit } from './ports/jsonl-audit.js';
@@ -67,8 +67,8 @@ export interface StartServerOptions {
   appRoot: string;
   /** `app.getPath('userData')`. */
   userDataDir: string;
-  /** The Electron binary, for the migration child processes. */
-  nodeExecutable: string;
+  /** Runs the migration commands (a utility process each, forked by the main process). */
+  runNodeScript: NodeScriptRunner;
   /** The per-launch token. */
   token: string;
   /** Origins allowed to call the API (the renderer's). */
@@ -109,7 +109,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   const database = await startDatabase({
     appRoot: options.appRoot,
     dataDir: folder.db,
-    nodeExecutable: options.nodeExecutable,
+    runScript: options.runNodeScript,
     log: options.log,
   });
   if (restored) await discardPreviousData(folder);
