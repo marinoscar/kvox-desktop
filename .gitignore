@@ -1,0 +1,14 @@
+node_modules/
+out/
+dist/
+release/
+coverage/
+.vite/
+*.log
+.env
+.env.*
+# local app data created by dev runs
+.userdata/
+# test artifacts
+playwright-report/
+test-results/
