@@ -8,10 +8,12 @@ import { SearchIndexingModule, SearchModule } from '@marinoscar/kvox-api/search'
 import { TranscriptionModule } from '@marinoscar/kvox-api/transcription';
 import { TranscriptsModule } from '@marinoscar/kvox-api/transcripts';
 
-import { DesktopAiController } from './desktop-ai.controller.js';
+import type { DesktopAi } from './ai/desktop-ai.js';
+import { DESKTOP_AI, DESKTOP_EGRESS, DesktopAiController } from './desktop-ai.controller.js';
 import { DesktopDataController } from './desktop-data.controller.js';
 import { LOCAL_FS_OBJECT_STORE, LocalStoreController, LocalUploadsController } from './local-store.controller.js';
 import type { LocalFsObjectStore } from './ports/local-fs-object-store.js';
+import type { EgressGuard } from './egress-guard.js';
 import { StorageObjectsController } from './storage-objects.controller.js';
 
 // =============================================================================
@@ -24,7 +26,7 @@ import { StorageObjectsController } from './storage-objects.controller.js';
 //   TranscriptionModule  NO provider at all (ADR-0006: Desktop has no
 //                        transcription); it is here because transcripts, a
 //                        peer of notes, needs it.
-//   SearchModule         full text (the fake AI reports no embeddings)
+//   SearchModule         full text (the AI binding offers no embeddings model)
 //   TranscriptsModule    no schedules, no transcode, no PDF exporter
 //   NotesModule          no schedules, no PDF/Word exporter, no PDF source;
 //                        text and Markdown documents are a source
@@ -43,6 +45,10 @@ export interface DesktopModuleOptions {
   ports: KvoxPortBindings;
   /** The object store the loopback controller serves. */
   objectStore: LocalFsObjectStore;
+  /** The KVOX_AI binding and the provider settings (`/api/desktop/ai`). */
+  desktopAi: DesktopAi;
+  /** The egress guard whose allowlist the AI settings drive. */
+  egress: EgressGuard;
 }
 
 @Module({})
@@ -78,6 +84,8 @@ export function createDesktopModule(options: DesktopModuleOptions): DynamicModul
     controllers: [LocalStoreController, LocalUploadsController, StorageObjectsController, DesktopAiController, DesktopDataController],
     providers: [
       { provide: LOCAL_FS_OBJECT_STORE, useValue: options.objectStore },
+      { provide: DESKTOP_AI, useValue: options.desktopAi },
+      { provide: DESKTOP_EGRESS, useValue: options.egress },
       { provide: APP_PIPE, useClass: ZodValidationPipe },
     ],
   };

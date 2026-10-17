@@ -1,16 +1,21 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
+import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
+
 // =============================================================================
 // The D1 smoke test (marinoscar/kvox#582)
 // =============================================================================
 //
-// Upload a Markdown file, generate a note with the fake AI, quit, start again
-// on the same data folder and see the note; across both runs, no request may
-// reach any host but 127.0.0.1.
+// Configure the AI provider in Settings (an OpenAI-compatible server: a loopback
+// mock speaking Chat Completions, marinoscar/kvox#584) and save its key, upload a
+// Markdown file, generate a note through the real provider adapter, quit, start
+// again on the same data folder and see the note; across both runs, no request
+// may reach any host but 127.0.0.1, and the planted key is in no log line and in
+// no file of the data folder (only the keychain-encrypted blob holds it).
 //
 // It drives the built app (`out/`, after `npm run build`) or, when
 // KVOX_E2E_EXECUTABLE names one, an installed/unpacked app. It writes what it
@@ -18,6 +23,10 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 // =============================================================================
 
 const ROOT = resolve(__dirname, '..', '..');
+const PLANTED_KEY = 'sk-e2e-PLANTEDkvox584DoNotLeak0123456789';
+const NOTE_TEXT =
+  '# Meeting notes\n\nGenerated on this device through the configured AI provider.\n\n- Joe sends the budget by Friday.\n- Desktop smoke marker: zebracorn.\n';
+let provider: OpenAiCompatibleMock | undefined;
 const userDataDir = mkdtempSync(join(tmpdir(), 'kvox-e2e-'));
 const requests: string[] = [];
 const mainLog: string[] = [];
@@ -58,8 +67,13 @@ async function idleMemory(app: ElectronApplication): Promise<Record<string, numb
   return byType;
 }
 
+test.beforeAll(async () => {
+  provider = await startOpenAiCompatibleMock(NOTE_TEXT);
+});
+
 test.afterAll(async () => {
   await running?.close().catch(() => undefined);
+  await provider?.close();
   mkdirSync(join(ROOT, 'test-results'), { recursive: true });
   metrics.mainLog = mainLog.filter((line) => line.startsWith('[kvox]'));
   writeFileSync(join(ROOT, 'test-results', 'metrics.json'), `${JSON.stringify(metrics, null, 2)}\n`);
@@ -72,6 +86,31 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   // ---- First launch: empty data folder, every migration applied ----------------
   const first = await launch('cold');
   const { page } = first;
+
+  // ---- Settings: the provider, its model, its key ------------------------------
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await expect(page.getByRole('heading', { name: 'AI provider' })).toBeVisible();
+  await expect(page.getByText('KVox may connect only to: api.openai.com')).toBeVisible();
+  await expect(page.getByLabel(/GitHub Copilot/)).toBeDisabled();
+  await page.getByRole('radio', { name: 'OpenAI-compatible server' }).check();
+  await page.getByLabel('Base URL').fill(provider!.baseUrl);
+  await page.getByLabel('Model').fill('mock-model');
+  await page.getByRole('button', { name: 'Save AI settings' }).click();
+  await expect(page.getByText('AI settings saved.')).toBeVisible();
+  await expect(page.getByText('KVox connects to nothing outside this device.')).toBeVisible();
+  // A Linux session with no keyring: the key is refused until the user accepts plaintext storage.
+  const plaintext = page.getByLabel('Store keys without system encryption on this device');
+  if (await plaintext.isVisible()) {
+    // Controlled by the main process's answer: click, then wait for the box to follow.
+    await plaintext.click();
+    await expect(plaintext).toBeChecked();
+  }
+  await page.getByLabel('API key', { exact: true }).fill(PLANTED_KEY);
+  await page.getByRole('button', { name: 'Save key' }).click();
+  await expect(page.getByText('API key saved in the system keychain.')).toBeVisible();
+  await expect(page.getByLabel('API key status')).toHaveText(new RegExp(`A key is saved \\(…${PLANTED_KEY.slice(-4)}\\)`));
+  await expect(page.getByLabel('API key', { exact: true })).toHaveValue('');
+  await page.getByRole('link', { name: 'Notes' }).click();
 
   await page.getByRole('button', { name: 'New note' }).filter({ visible: true }).first().click();
   await expect(page.getByRole('heading', { name: 'New note' })).toBeVisible();
@@ -111,4 +150,22 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   expect(outside, 'requests to a host other than 127.0.0.1').toEqual([]);
   expect(mainLog.filter((line) => line.includes('egress blocked')), 'requests the egress guard cancelled').toEqual([]);
   expect(requests.some((url) => url.startsWith('http://127.0.0.1:'))).toBe(true);
+  expect(mainLog.some((line) => line.includes('server: egress allowlist is loopback only'))).toBe(true);
+
+  // ---- The key reached the provider, and nothing else -------------------------
+  const generations = provider!.requests.filter((r) => r.path.endsWith('/chat/completions'));
+  expect(generations.length).toBeGreaterThan(0);
+  expect(generations.every((r) => r.authorization === `Bearer ${PLANTED_KEY}`)).toBe(true);
+  expect(mainLog.join('\n')).not.toContain('PLANTEDkvox584');
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) walk(path);
+      else files.push(path);
+    }
+  };
+  walk(userDataDir);
+  const holding = files.filter((file) => readFileSync(file).includes(Buffer.from('PLANTEDkvox584')));
+  expect(holding, 'files of the data folder holding the key in the clear').toEqual([]);
 });

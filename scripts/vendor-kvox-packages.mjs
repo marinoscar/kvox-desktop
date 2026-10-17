@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // =============================================================================
-// Vendor the four @marinoscar/kvox-* packages (temporary, until #577 publishes them)
+// Vendor the five @marinoscar/kvox-* packages (temporary, until #577 publishes them)
 // =============================================================================
 //
-// Builds @marinoscar/kvox-{contract,db,api,web} from a marinoscar/kvox checkout,
+// Builds @marinoscar/kvox-{contract,db,api,ai,web} from a marinoscar/kvox checkout,
 // packs each with `npm pack` (what examples/bare-host/run.mjs --from pack does),
-// copies the four tarballs to vendor/kvox/ and records where they came from in
+// copies the five tarballs to vendor/kvox/ and records where they came from in
 // vendor/kvox/SOURCE.json. package.json depends on them through `file:` paths.
 //
 // Usage:
@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const VENDOR = join(ROOT, 'vendor', 'kvox');
-const PACKAGES = ['contract', 'db', 'api', 'web'];
+const PACKAGES = ['contract', 'db', 'api', 'ai', 'web'];
 const REPO_URL = 'https://github.com/marinoscar/kvox';
 
 function usage(message) {

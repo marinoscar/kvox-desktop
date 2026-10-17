@@ -1,15 +1,16 @@
 import type { ComponentType } from 'react';
 
+import { AiProviderCard } from './AiProviderCard';
 import { DataPrivacyCard } from './DataPrivacyCard';
 
 // =============================================================================
 // The settings registry: one entry per card of the settings page
 // =============================================================================
 //
-// D3 (marinoscar/kvox#584) owns the settings shell and adds its cards (AI
-// provider, models, budgets) here; D2 (marinoscar/kvox#583) adds "Data and
-// privacy": the data folder, Export data / Restore, and how saved keys are
-// protected. Order is the page's order.
+// D3 (marinoscar/kvox#584) adds "AI provider": the provider, its model and its
+// key; D2 (marinoscar/kvox#583) adds "Data and privacy": the data folder,
+// Export data / Restore, and how saved keys are protected. Order is the page's
+// order.
 // =============================================================================
 
 export interface DesktopSettingsCard {
@@ -20,5 +21,6 @@ export interface DesktopSettingsCard {
 }
 
 export const desktopSettingsCards: readonly DesktopSettingsCard[] = [
+  { id: 'ai-provider', title: 'AI provider', Component: AiProviderCard },
   { id: 'data-privacy', title: 'Data and privacy', Component: DataPrivacyCard },
 ];

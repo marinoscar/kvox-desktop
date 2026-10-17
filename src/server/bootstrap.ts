@@ -7,8 +7,9 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 
 import { KvoxEventEmitterEvents } from '@marinoscar/kvox-api/core';
-import { createFakeKvoxAi } from '@marinoscar/kvox-api/testing';
 
+import { DESKTOP_AI_SETTINGS_NAMESPACE } from './ai/desktop-ai-settings.js';
+import { DesktopAi, loadProviderAdapters, type DesktopAiAdapters } from './ai/desktop-ai.js';
 import { createDesktopModule } from './app.module.js';
 import { applyPendingRestore, discardPreviousData, shippedMigrations } from './backup/backup.js';
 import { registerBackupJobs } from './backup/backup-jobs.js';
@@ -45,21 +46,16 @@ import { LOCAL_USER_ID, seedDatabase } from './seed.js';
 //   events       KvoxEventEmitterEvents (the package default, bound explicitly)
 //   audit        JsonlAudit           logs/audit.log, ids and counts
 //   prisma       the PGlite-backed client, one connection
-//   ai           createFakeKvoxAi                                  -> D3 (#584)
+//   ai           DesktopAi            createKvoxAi over createDirectRuntime: the platform
+//                                     OpenAI / OpenAI-compatible adapters, keys from
+//                                     KVOX_SECRETS, the `desktopAi` settings (#584)
 //
 // THE ORDER: egress guard first (nothing may leave before it), then a staged
-// restore (before PGlite opens the folder), the database, the seed, Nest (the
-// slices register their handlers and namespaces), the backup handlers, crash
-// recovery of the job table, and only then the job loop.
+// restore (before PGlite opens the folder), the database, the seed, the AI
+// settings (which narrow the allowlist to the configured provider's host), Nest
+// (the slices register their handlers and namespaces), the backup handlers,
+// crash recovery of the job table, and only then the job loop.
 // =============================================================================
-
-/** What the fake model "writes" for every note (the smoke test looks for the last line). */
-export const FAKE_NOTE_TEXT = [
-  '# Meeting notes\n\n',
-  'Generated on this device by the KVox Desktop stack spike.\n\n',
-  '- The local server, the database and the job runner run in a utility process.\n',
-  '- Desktop smoke marker: zebracorn.\n',
-];
 
 /** Options of {@link startServer}. */
 export interface StartServerOptions {
@@ -118,6 +114,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
 
   let jobs: PgTableJobs | undefined;
   let app: NestFastifyApplication | undefined;
+  let providers: DesktopAiAdapters | undefined;
   try {
     const orgId = await seedDatabase(prisma);
 
@@ -136,7 +133,19 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       }),
       defaults: { maxInputTokens: null, maxOutputTokens: null, maxDocumentBytes: 10 * 1024 * 1024 },
     });
-    const ai = createFakeKvoxAi({ script: { text: FAKE_NOTE_TEXT, capabilities: { embeddings: null } } });
+    settings.registerNamespace(DESKTOP_AI_SETTINGS_NAMESPACE);
+    const secrets = new SafeStorageSecrets({ file: folder.secrets, cipher: options.cipher, log: options.log });
+    providers = await loadProviderAdapters();
+    const desktopAi = new DesktopAi({
+      settings,
+      secrets,
+      adapters: providers.adapters,
+      onAllowedHosts: (hosts) => {
+        egress.allow(hosts);
+        options.log(`server: egress allowlist is loopback${hosts.length > 0 ? ` and ${hosts.join(', ')}` : ' only'}`);
+      },
+    });
+    await desktopAi.applyEgress();
     const identity = new LaunchTokenIdentity({
       userId: LOCAL_USER_ID,
       orgId,
@@ -147,14 +156,16 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     app = await NestFactory.create<NestFastifyApplication>(
       createDesktopModule({
         objectStore,
+        desktopAi,
+        egress,
         ports: {
-          ai: { useValue: ai },
+          ai: { useValue: desktopAi.port },
           objectStore: { useValue: objectStore },
           jobs: { useValue: jobs },
           identity: { useValue: identity },
           notify: { useValue: new DesktopNotify({ show: (n) => options.showNotification(n.title, n.body), appName: 'KVox Desktop', log: options.log }) },
           settings: { useValue: settings },
-          secrets: { useValue: new SafeStorageSecrets({ file: folder.secrets, cipher: options.cipher, log: options.log }) },
+          secrets: { useValue: secrets },
           events: { useValue: new KvoxEventEmitterEvents() },
           audit: { useValue: new JsonlAudit(folder.auditLog) },
           prisma: { useValue: prisma as never },
@@ -205,7 +216,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     timings.serverStart = Math.round(performance.now() - started);
     options.log(`server: listening on ${baseUrl} (${JSON.stringify(timings)})`);
 
-    const running = { jobs, app };
+    const running = { jobs, app, providers };
     return {
       port,
       userId: LOCAL_USER_ID,
@@ -215,6 +226,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       async close() {
         await running.jobs.stop();
         await running.app.close();
+        await running.providers.close();
         await prisma.$disconnect();
         await database.close();
       },
@@ -222,6 +234,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   } catch (error) {
     await jobs?.stop().catch(() => undefined);
     await app?.close().catch(() => undefined);
+    await providers?.close().catch(() => undefined);
     await prisma.$disconnect().catch(() => undefined);
     await database.close().catch(() => undefined);
     throw error;
