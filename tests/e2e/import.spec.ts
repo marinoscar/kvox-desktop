@@ -5,6 +5,8 @@ import { join, resolve } from 'node:path';
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
 import type { KvoxDesktopBridge } from '../../src/shared/protocol';
+import { MOCK_NOTE_TEXT, configureAiProvider } from '../support/configure-ai';
+import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
 
 // =============================================================================
 // Import from a native dialog and by drag and drop (marinoscar/kvox#585)
@@ -24,7 +26,8 @@ import type { KvoxDesktopBridge } from '../../src/shared/protocol';
 // fixture's path (a test cannot click a native dialog). The drop is Chromium's
 // own (CDP `Input.dispatchDragEvent` with real file paths), so the preload reads
 // the dropped file's path exactly as it does for a user. No request may reach a
-// host other than 127.0.0.1.
+// host other than 127.0.0.1. The AI provider is a loopback OpenAI-compatible
+// mock, configured in Settings first (marinoscar/kvox#584).
 // =============================================================================
 
 const ROOT = resolve(__dirname, '..', '..');
@@ -33,9 +36,15 @@ const userDataDir = mkdtempSync(join(tmpdir(), 'kvox-e2e-import-'));
 const requests: string[] = [];
 const mainLog: string[] = [];
 let app: ElectronApplication | undefined;
+let provider: OpenAiCompatibleMock | undefined;
+
+test.beforeAll(async () => {
+  provider = await startOpenAiCompatibleMock(MOCK_NOTE_TEXT);
+});
 
 test.afterAll(async () => {
   await app?.close().catch(() => undefined);
+  await provider?.close();
   rmSync(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 });
 
@@ -78,6 +87,7 @@ test('every input kind imports from the dialog or by drag and drop, with no egre
   app.context().on('request', (request) => requests.push(request.url()));
   const page = await app.firstWindow();
   await expect(page.getByRole('heading', { name: 'Notes', level: 1 })).toBeVisible({ timeout: 180_000 });
+  await configureAiProvider(page, { baseUrl: provider!.baseUrl, apiKey: 'sk-e2e-import-0123456789abcdef' });
 
   // ---- PDF transcript, from the dialog --------------------------------------
   await answerDialogWith(app, [join(FIXTURES, 'roadmap-sync-transcript.pdf')]);

@@ -31,8 +31,8 @@ import { fakeCipher, openTestDatabase, type TestDatabase } from './support/datab
 // cipher: `safeStorage` exists only inside Electron), the OS notifier (with a
 // recording `show`), the events default and the audit log.
 //
-// `ai` is skipped: Desktop binds the package fake until D3 (marinoscar/kvox#584),
-// and the fake passes the kit in the package's own spec.
+// `ai` is skipped here: tests/unit/desktop-ai.test.ts runs the AI kit
+// (`describeKvoxAiConformance`) over the Desktop binding (marinoscar/kvox#584).
 //
 // THE UPLOAD RULE SENDS ITS BYTES: the store refuses to seal an upload whose parts
 // never arrived, so `uploadParts` checks each signed part URL and hands the bytes

@@ -1,13 +1,13 @@
 {
   "$comment": "Written by scripts/vendor-kvox-packages.mjs. Temporary until the packages are on npm (marinoscar/kvox#577).",
   "repository": "https://github.com/marinoscar/kvox",
-  "commit": "3ebe5c3d8d5944f98fe1753daaeda07919d5767d",
-  "vendoredAt": "2026-10-17T22:17:07.209Z",
+  "commit": "35b405de0ea55f56d3d8e7936600f441b3d6841c",
+  "vendoredAt": "2026-10-17T22:48:12.049Z",
   "tarballs": {
     "@marinoscar/kvox-contract": {
       "file": "marinoscar-kvox-contract-0.0.0.tgz",
       "version": "0.0.0",
-      "sha256": "9578af73fc94fd37521ffb1a57f88afe95154320755025aa72b0c6ff44e8b584"
+      "sha256": "3b24e46be83b3e6a68d3c948eb6045909119eddedec2cfd4bb19863aa8fd5e94"
     },
     "@marinoscar/kvox-db": {
       "file": "marinoscar-kvox-db-0.0.0.tgz",
@@ -17,12 +17,17 @@
     "@marinoscar/kvox-api": {
       "file": "marinoscar-kvox-api-0.0.0.tgz",
       "version": "0.0.0",
-      "sha256": "fb62a5112232a25193631a87a9b429d8ceb77263630b81d05f3c5897c0a4776b"
+      "sha256": "33c5a9d7f3950e58b939b96c75fff485af8edbab6613a4bc951d1c3d61b80a00"
+    },
+    "@marinoscar/kvox-ai": {
+      "file": "marinoscar-kvox-ai-0.0.0.tgz",
+      "version": "0.0.0",
+      "sha256": "7ef455d96edcbffb73ce5f36f96c9a2e6b04d23d88f3be0c9ee478c4e64436e3"
     },
     "@marinoscar/kvox-web": {
       "file": "marinoscar-kvox-web-0.0.0.tgz",
       "version": "0.0.0",
-      "sha256": "b990a242a9f140c3e1505b341e03c1681ce3bd8dc1c224711a2bb66fe8e71926"
+      "sha256": "e75ee4d045f66397f838784ca9e251aac76231dd0377ddc5763149279559b58a"
     }
   }
 }

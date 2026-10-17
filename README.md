@@ -89,7 +89,7 @@ What leaves the device:
 No telemetry, no crash upload, no remote fonts. Both processes enforce it:
 
 - **Window**: the page's CSP allows only loopback (`connect-src http://127.0.0.1:*`), and the session cancels any request that is not loopback, `kvox:`, `file:`, `data:`, `blob:` or `devtools:`.
-- **Server**: a global undici dispatcher (for `fetch`) and a guard on every outgoing socket (`http`, `https`, `tls`, `net`) allow loopback and the AI provider's host only (`api.openai.com` until D3 wires the configured base URL).
+- **Server**: a global undici dispatcher (for `fetch`) and a guard on every outgoing socket (`http`, `https`, `tls`, `net`) allow loopback and the configured AI provider's host only: `api.openai.com` for OpenAI, the base URL's host for an OpenAI-compatible server (none at all for one on this device). Saving the AI settings replaces the allowlist at once.
 
 Every blocked request is an error line in the log with the host only (`window: egress blocked: example.com`, `server: egress blocked: example.com`), plus a running count. The loopback server requires a per-launch token. For fully offline use, point the OpenAI-compatible base URL at a local model server (Ollama, LM Studio).
 
@@ -124,11 +124,15 @@ The file's content decides, not its name (`detectKvoxImport` in `@marinoscar/kvo
 
 ## AI providers
 
+Settings > AI provider. `KVOX_AI` is the packages' own `createKvoxAi` over `createDirectRuntime` (`@marinoscar/kvox-ai`), with the platform's provider adapters (`@marinoscar/platform-api/ai`, an interim dependency until marinoscar/kvox#578) and the key read from `KVOX_SECRETS` on every call (`src/server/ai/`).
+
 | Provider | Setup | Status |
 |---|---|---|
-| OpenAI | Paste the API key in settings; it is stored in the OS keychain | First release |
-| OpenAI-compatible | Set the base URL (and key if needed) | First release |
-| GitHub Copilot | One more provider adapter (#581) | Later, if its requirements can be met |
+| OpenAI | Pick the model and paste the API key; it is stored in the OS keychain | Available |
+| OpenAI-compatible | Set the base URL, model and wire style (Chat Completions or Responses), and a key unless the server takes none | Available |
+| GitHub Copilot | A disabled, opt-in slot: decided "go, without Ask" (marinoscar/kvox#581); its models will report no tool calling | Adapter not built yet |
+
+The non-secret choices are the system settings namespace `desktopAi` (in the database, so they travel in a backup); keys are `KVOX_SECRETS` purpose `ai`, named after the provider, and never appear in a setting, a response, a log line or an error. Semantic search embeds with OpenAI's `text-embedding-3-small` (the packages' embedding catalog), so it needs an OpenAI key and the OpenAI provider; otherwise search stays full-text.
 
 ## Repository layout
 
@@ -170,9 +174,9 @@ tests/fixtures/  Synthetic import fixtures (a PDF transcript, a transcript JSON,
 | `KVOX_AUDIT` | `jsonl-audit.ts`: `logs/audit.log` | Append-only; ids and counts only |
 | `KVOX_PRISMA` | The PGlite-backed client (`database.ts`) | Pool of one |
 | `KVOX_BRAND` | `KVox Desktop` | |
-| `KVOX_AI` | The package fake | D3 (#584) |
+| `KVOX_AI` | `ai/desktop-ai.ts`: `createKvoxAi` over `createDirectRuntime` | Keys from `KVOX_SECRETS` per call; models from the `desktopAi` settings (#584) |
 
-`tests/unit/ports-conformance.test.ts` runs `describeKvoxPortsConformance` against these adapters (all but `ai`).
+`tests/unit/ports-conformance.test.ts` runs `describeKvoxPortsConformance` against these adapters (all but `ai`); `tests/unit/desktop-ai.test.ts` runs `describeKvoxAiConformance` against the `ai` binding.
 
 ## Getting started
 
