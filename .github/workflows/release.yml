@@ -21,8 +21,10 @@
 #            unless the repository variable ALLOW_UNSIGNED_RELEASE is "true":
 #            then it is published as a PRE-RELEASE and says it is unsigned.
 #
-# workflow_dispatch builds and checks everything without creating a release
-# (a dry run).
+# workflow_dispatch from a branch builds and checks everything without creating
+# a release (a dry run). workflow_dispatch ON A TAG releases like a tag push:
+# that is how .github/workflows/tag-release.yml (Actions > Tag and release)
+# starts it.
 #
 # Secrets never reach a log: they are passed as environment variables to the
 # step that needs them, files made from them live in $RUNNER_TEMP, and
@@ -83,7 +85,7 @@ jobs:
           cache: npm
 
       - name: The tag names this version
-        if: github.event_name == 'push'
+        if: github.ref_type == 'tag'
         shell: bash
         run: |
           version="$(node -p "require('./package.json').version")"
@@ -254,7 +256,7 @@ jobs:
   release:
     name: release
     needs: build
-    if: github.event_name == 'push'
+    if: github.ref_type == 'tag'
     environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 30

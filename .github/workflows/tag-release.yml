@@ -1,0 +1,68 @@
+# =============================================================================
+# Tag and release: cut a release from the GitHub UI, no local git needed
+# (marinoscar/kvox#587)
+# =============================================================================
+#
+# Actions > "Tag and release" > Run workflow (from main), and type the version
+# exactly as it is in package.json (for example 0.1.0-rc.1). It checks that,
+# creates the tag v<version> on that commit, and starts the Release workflow on
+# the tag (release.yml: builds every installer and creates the draft release).
+#
+# Pushing a v* tag by hand still works and does the same.
+#
+# A tag pushed with the workflow token does not start other workflows by
+# itself, so this dispatches release.yml on the new tag explicitly
+# (workflow_dispatch is the one trigger the token is allowed to start).
+# An existing tag is never moved: the run fails if v<version> already exists.
+# =============================================================================
+name: Tag and release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, exactly as in package.json (e.g. 0.1.0-rc.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write # create the tag
+  actions: write # dispatch release.yml on it
+
+jobs:
+  tag:
+    name: tag v${{ inputs.version }} and start the release
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: The version matches package.json
+        run: |
+          current="$(node -p "require('./package.json').version")"
+          if [ "$VERSION" != "$current" ]; then
+            echo "::error title=Version::you asked for ${VERSION} but package.json on main is ${current}"
+            exit 1
+          fi
+
+      - name: Create the tag (never move an existing one)
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "::error title=Tag::v${VERSION} already exists; refusing to move it"
+            exit 1
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/v${VERSION}" -f sha="${GITHUB_SHA}"
+          echo "Created v${VERSION} at ${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Start the Release workflow on the tag
+        run: |
+          gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "v${VERSION}"
+          echo "Started release.yml on v${VERSION}: https://github.com/${GITHUB_REPOSITORY}/actions/workflows/release.yml" >> "$GITHUB_STEP_SUMMARY"
