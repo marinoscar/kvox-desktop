@@ -97,6 +97,8 @@ export interface RunningServer {
   readonly permissions: readonly string[];
   readonly timings: Record<string, number>;
   readonly egress: EgressGuard;
+  /** The housekeeping timer; `runOnce()` queues one round (tests). */
+  readonly housekeeping: Housekeeping;
   close(): Promise<void>;
 }
 
@@ -246,6 +248,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       permissions: LOCAL_USER_PERMISSIONS,
       timings,
       egress,
+      housekeeping,
       async close() {
         await running.housekeeping.stop();
         await running.jobs.stop();

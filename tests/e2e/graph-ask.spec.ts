@@ -29,7 +29,9 @@ import { QUESTIONS, scriptedModel } from '../support/scripted-model';
 // question has no answer until "Set manager" on her entity page says Mark Chen.
 //
 // Also checked: every meeting has its ATTENDED rows from the named speakers (the
-// D4 leftover), and no request reaches a host but 127.0.0.1. The model is
+// D4 leftover); the graph exports as Turtle and that file imports back through
+// SHACL validation (run in a utility process: the RunAsNode fuse is off); and
+// no request reaches a host but 127.0.0.1. The model is
 // scripted (`tests/support/scripted-model.ts`, over the package's own scripted
 // model); a run with a live key is the manual check recorded on the issue.
 // =============================================================================
@@ -243,11 +245,12 @@ test('the reference questions are answered with citations, and a manager set by 
   await page.goto(page.url().replace(/#.*$/, `#/graph/entities/${person.get('Priya Shah')}`));
   await expect(page.getByRole('heading', { name: 'Priya Shah', level: 1 })).toBeVisible();
   await page.getByRole('button', { name: 'Set manager' }).click();
-  const target = page.getByRole('combobox', { name: /manager/i });
-  await target.fill('Mark');
+  const dialog = page.getByRole('dialog', { name: 'Set manager' });
+  await dialog.getByRole('combobox', { name: 'Manager' }).fill('Mark');
   await page.getByRole('option', { name: /Mark Chen/ }).click();
-  await page.getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByText('Mark Chen').first()).toBeVisible();
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Saved.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Remove Reports to Mark Chen' })).toBeVisible();
 
   const manual = await ask(page, QUESTIONS.manualBossMeetings);
   expect(manual.status).toBe('complete');
@@ -257,6 +260,39 @@ test('the reference questions are answered with citations, and a manager set by 
   expect(manual.content).toContain(MEETINGS[2].title);
   expect(manual.citations.every((c) => c.valid)).toBe(true);
   expect(manual.citations.some((c) => c.via?.kind === 'relation')).toBe(true);
+  // The manager came from the user, and the answer says so.
+  expect(manual.citations.some((c) => c.kind === 'evidence' && c.label === 'Set by hand' && c.via?.kind === 'relation')).toBe(true);
+
+  // ---- RDF export, and the SHACL-validated import (a utility process) -------
+  const created = await api<{ export: { id: string } }>(page, '/graph/exports', { method: 'POST', json: { format: 'turtle' } });
+  const exported = await until(
+    () => api<{ status: string; downloadUrl: string | null; stats: Record<string, number> }>(page, `/graph/exports/${created.export.id}`),
+    (e) => e.status === 'ready' || e.status === 'failed',
+    'the Turtle export',
+  );
+  expect(exported.status).toBe('ready');
+  results.export = exported.stats;
+  const imported = await page.evaluate(async (downloadUrl) => {
+    const bridge = (window as unknown as { kvoxDesktop: KvoxDesktopBridge }).kvoxDesktop;
+    const { baseUrl, token } = await bridge.connection();
+    const auth = { Authorization: `Bearer ${token}` };
+    const turtle = await (await fetch(downloadUrl.startsWith('http') ? downloadUrl : `${baseUrl}${downloadUrl}`, { headers: auth })).text();
+    const form = new FormData();
+    form.append('file', new Blob([turtle], { type: 'text/turtle' }), 'graph.ttl');
+    const response = await fetch(`${baseUrl}/api/graph/imports`, { method: 'POST', headers: auth, body: form });
+    const body = await response.json();
+    return { status: response.status, proposalId: (body.data ?? body).proposalId as string, mentionsMark: turtle.includes('Mark Chen') };
+  }, exported.downloadUrl!);
+  expect(imported.status).toBe(202);
+  expect(imported.mentionsMark).toBe(true);
+  const importProposal = await until(
+    () => api<{ proposal: { status: string } }>(page, `/graph/proposals/${imported.proposalId}`),
+    (p) => p.proposal.status !== 'extracting',
+    'the SHACL-validated import',
+  );
+  // Validated and staged for review: nothing entered the graph without a commit.
+  expect(importProposal.proposal.status).toBe('draft');
+  results.import = importProposal.proposal.status;
 
   // ---- No egress -------------------------------------------------------------
   const outside = requests.filter((url) => {
