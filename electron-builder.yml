@@ -80,6 +80,12 @@ publish:
 win:
   target:
     - target: nsis
+    # An MSI as well (x64 only), for people who deploy with msiexec, winget or
+    # group policy. It installs for the current user; there is no "Remove my
+    # data" step in an MSI, so the user's data always stays on uninstall.
+    - target: msi
+      arch:
+        - x64
   # Signing: scripts/dist.mjs adds azureSignOptions (Azure Trusted Signing).
 nsis:
   oneClick: false
@@ -90,6 +96,13 @@ nsis:
   deleteAppDataOnUninstall: false
   include: build/installer.nsh
   artifactName: KVox-${version}-win-setup.${ext}
+msi:
+  oneClick: false
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  runAfterFinish: false
+  artifactName: KVox-${version}-win-${arch}.${ext}
 mac:
   target:
     - target: dmg

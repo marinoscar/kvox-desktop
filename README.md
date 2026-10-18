@@ -242,6 +242,7 @@ Download from the [latest release](https://github.com/marinoscar/kvox-desktop/re
 | OS | File | Notes |
 |---|---|---|
 | Windows 10/11 (x64, arm64) | `KVox-<version>-win-setup.exe` | Installs for the current user only; no administrator prompt. One installer for both architectures |
+| Windows 10/11 (x64) | `KVox-<version>-win-x64.msi` | The same app as an MSI, for `msiexec /i`, winget or group policy. Installs for the current user. An MSI has no "Remove my data" step: uninstalling always leaves your data folder |
 | macOS 13+ (Apple silicon) | `KVox-<version>-mac-arm64.dmg` | Open the dmg, drag KVox to Applications |
 | macOS 13+ (Intel) | `KVox-<version>-mac-x64.dmg` | |
 | Ubuntu 22.04+ / Debian (x64) | `KVox-<version>-linux-amd64.deb` | **Recommended on Linux**: `sudo apt install ./KVox-<version>-linux-amd64.deb` |
@@ -254,7 +255,7 @@ sha256sum -c SHA256SUMS --ignore-missing          # Linux; macOS: shasum -a 256 
 gpg --verify SHA256SUMS.asc SHA256SUMS            # when the release has a signature
 ```
 
-On Windows: `Get-FileHash .\KVox-<version>-win-setup.exe -Algorithm SHA256` and compare with the line in `SHA256SUMS`.
+On Windows: `Get-FileHash .\KVox-<version>-win-setup.exe -Algorithm SHA256` (or the `.msi`) and compare with the line in `SHA256SUMS`.
 
 **Ubuntu 24.04 and AppArmor.** Ubuntu 24.04 restricts unprivileged user namespaces, which the Chromium sandbox needs. The `.deb` installs an AppArmor profile (`/etc/apparmor.d/kvox-desktop`, from `build/linux/kvox-desktop.apparmor`) that grants them to `/opt/KVox/kvox-desktop` only, and loads it; on 22.04 the profile is skipped (no AppArmor ABI 4.0) and not needed. The AppImage cannot install a profile: on 24.04 prefer the `.deb`, or add an equivalent profile for the AppImage's path yourself. Never run KVox with `--no-sandbox`.
 

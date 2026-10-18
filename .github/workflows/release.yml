@@ -10,7 +10,7 @@
 #            and variables only): unit tests, installers through
 #            scripts/dist.mjs (signs what the secrets allow, says what it did
 #            not), signature checks, the packaged smoke test.
-#              windows-latest   NSIS, x64 + arm64, Azure Trusted Signing (OIDC)
+#              windows-latest   NSIS (x64 + arm64) and MSI (x64), Azure Trusted Signing (OIDC)
 #              macos-latest     dmg + zip, arm64, Developer ID + notarization
 #              macos-15-intel   dmg + zip, x64,   Developer ID + notarization
 #              ubuntu-latest    deb + AppImage, x64
@@ -163,7 +163,7 @@ jobs:
           $plan = Get-Content release/signing-win32-*.json | ConvertFrom-Json
           if (-not $plan.windowsSigned) { Write-Output "::notice title=Signing::Windows: unsigned build, nothing to verify"; exit 0 }
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
-          foreach ($file in @(Get-ChildItem release/*.exe) + @(Get-Item release/win-unpacked/KVox.exe)) {
+          foreach ($file in @(Get-ChildItem release/*.exe) + @(Get-ChildItem release/*.msi) + @(Get-Item release/win-unpacked/KVox.exe)) {
             & $signtool.FullName verify /pa /v $file.FullName
             if ($LASTEXITCODE -ne 0) { throw "signtool verify failed: $($file.Name)" }
             $sig = Get-AuthenticodeSignature $file.FullName
@@ -229,6 +229,7 @@ jobs:
           path: |
             release/*.exe
             release/*.exe.blockmap
+            release/*.msi
             release/*.dmg
             release/*.dmg.blockmap
             release/*.zip
