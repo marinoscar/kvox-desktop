@@ -1,4 +1,4 @@
-// Copied from marinoscar/kvox examples/bare-host/src/local-store.controller.ts (kvox commit in vendor/kvox/SOURCE.json). A host binding.
+// Copied from marinoscar/kvox examples/bare-host/src/local-store.controller.ts (kvox tag kvox-packages-v0.1.0-next.0). A host binding.
 import {
   Body,
   Controller,
