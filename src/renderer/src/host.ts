@@ -38,14 +38,18 @@ async function toError(response: Response): Promise<KvoxApiError> {
   );
 }
 
-/** Builds the host once per connection (hooks key on its identity). */
-export function createDesktopHost(connection: DesktopConnection): KvoxWebHost {
+/**
+ * Builds the host once per connection and connected-knowledge state (hooks key
+ * on its identity, so a new switch value reaches every slice).
+ */
+export function createDesktopHost(connection: DesktopConnection, graphEnabled: boolean | undefined): KvoxWebHost {
   const api = `${connection.baseUrl}/api`;
   const authorization = (): string => `Bearer ${connection.token}`;
   // Stable objects: the slices read them per render and memoise on them.
   const viewer = { userId: connection.userId, permissions: new Set(connection.permissions) };
-  // Mirrors the server's `ai.graphEnabled`, which Desktop declares ON and nothing turns off.
-  const features = { graphEnabled: true };
+  // Mirrors the server's `ai.graphEnabled` (on by default, the settings card's switch);
+  // `undefined` while unknown keeps the graph UI hidden.
+  const features = { graphEnabled };
 
   const send = async (method: string, path: string, init: KvoxRequestInit | undefined, body?: BodyInit, json = false): Promise<Response> => {
     const response = await fetch(`${api}${buildKvoxUrl(path, init?.query)}`, {

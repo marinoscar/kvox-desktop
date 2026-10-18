@@ -148,7 +148,7 @@ Ask answers from the graph through the packages' tools (`search`, `list_commitme
 
 Host duties Desktop carries for the graph:
 
-- The system `ai` namespace declares `graphEnabled`, **on** by default here, and `reasoningEffort`.
+- The system `ai` namespace declares `graphEnabled`, **on** by default here, and `reasoningEffort`. Settings > **Connected knowledge** switches it (`GET`/`PATCH /api/desktop/knowledge`). Off, KVox makes no graph or Ask call to the AI provider (the graph's AI routes answer 409 `graph_disabled`), hides Knowledge, Review and Ask, and keeps the graph you already have. The window mirrors the switch in `KvoxWebHost.features()`.
 - An hourly housekeeping timer (`src/server/housekeeping.ts`) calls the four enqueuers, because every slice runs with `schedules: false`.
 - The RDF peers (`n3`, `jsonld`, `rdf-validate-shacl`) and the `graphology` layout peers are installed.
 - The SHACL validation of a graph import runs in a utility process (`src/main/shacl-validate.ts`, wired through `shacl.run`). The RunAsNode fuse is off, so the package's default of spawning the binary as Node cannot work.

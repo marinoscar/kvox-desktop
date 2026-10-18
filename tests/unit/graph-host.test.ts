@@ -21,8 +21,9 @@ import { ROOT, fakeCipher, removeQuietly } from './support/database';
 //   - `shacl.run`: the input goes to the script as a file, the report comes
 //     back from the file it writes, both are removed, a failed run is an error;
 //   - the server as bootstrap starts it: the graph and Ask routes answer for the
-//     local user, `ai.graphEnabled` is on, and one housekeeping round calls the
-//     four enqueuers;
+//     local user, `ai.graphEnabled` is on, `/desktop/knowledge` turns it off
+//     (409 `graph_disabled`) and on again (#620), and one housekeeping round
+//     calls the four enqueuers;
 //   - the slices' own conformance kits over the handlers that server registered
 //     (job types, profiles, server-only AI jobs, a `sensitive` PersonFact never
 //     embedded or exported, rate limits), with nothing opted out.
@@ -122,6 +123,36 @@ describe('the graph and Ask on the Desktop server', () => {
       { method: 'POST', body: '{}' },
     );
     expect(JSON.stringify(response.body)).not.toContain('graph_disabled');
+  });
+
+  it('turns connected knowledge off and on again through /desktop/knowledge (#620)', async () => {
+    // Asking checks the switch before anything else but the conversation (ask-messages.service).
+    const conversation = await api<{ id: string }>('/ask/conversations', { method: 'POST', body: '{}' });
+    expect(conversation.status).toBe(201);
+    const ask = () =>
+      api<unknown>(`/ask/conversations/${conversation.body.id}/messages`, { method: 'POST', body: JSON.stringify({ content: 'Who is Joe?' }) });
+    expect((await api('/desktop/knowledge')).body).toEqual({ graphEnabled: true });
+
+    const off = await api('/desktop/knowledge', { method: 'PATCH', body: JSON.stringify({ graphEnabled: false }) });
+    expect(off).toEqual({ status: 200, body: { graphEnabled: false } });
+    expect((await api('/desktop/knowledge')).body).toEqual({ graphEnabled: false });
+    const disabled = await ask();
+    expect(disabled.status).toBe(409);
+    expect(JSON.stringify(disabled.body)).toContain('graph_disabled');
+    // Reading one's own graph is not an AI call: it still answers.
+    expect((await api('/graph/entities?type=Person')).status).toBe(200);
+
+    const on = await api('/desktop/knowledge', { method: 'PATCH', body: JSON.stringify({ graphEnabled: true }) });
+    expect(on.body).toEqual({ graphEnabled: true });
+    // No AI provider is configured: refused again, but for the provider, not the switch.
+    expect(JSON.stringify((await ask()).body)).not.toContain('graph_disabled');
+  });
+
+  it('refuses a /desktop/knowledge patch that is not { graphEnabled: boolean }', async () => {
+    for (const body of ['{}', '{"graphEnabled":"no"}', 'null']) {
+      expect((await api('/desktop/knowledge', { method: 'PATCH', body })).status).toBe(400);
+    }
+    expect((await api('/desktop/knowledge')).body).toEqual({ graphEnabled: true });
   });
 
   it('runs one housekeeping round over the four enqueuers', async () => {
