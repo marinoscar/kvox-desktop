@@ -127,10 +127,14 @@ async function importAndCommit(page: Page, meeting: (typeof MEETINGS)[number]): 
     (detail) => detail?.proposal?.proposal?.status === 'draft',
     `the draft proposal of "${meeting.title}"`,
   );
-  // The note page read "no proposal" before the extraction started and does not poll for one: reload.
-  await page.goto(page.url().replace(/#.*$/, `#/notes/${noteId}?review=1`));
+  // The note page read "no proposal" before the extraction started and does not poll for one
+  // (marinoscar/kvox#616): reload, then open the review sheet from the note's graph button.
   await page.reload();
+  await expect(page.getByText('Desktop smoke marker: zebracorn.')).toBeVisible();
   const send = page.getByRole('button', { name: /^Send to graph \(\d+\)$/ });
+  const sheet = page.getByRole('button', { name: /^Graph proposal/ }).first();
+  await expect(sheet).toBeVisible();
+  if ((await sheet.getAttribute('aria-expanded')) !== 'true') await sheet.click();
   await expect(send).toBeVisible();
   // Rows the slice prechecks are accepted already; accept whatever group is still undecided.
   const accept = page.getByRole('button', { name: /^Accept all / });
