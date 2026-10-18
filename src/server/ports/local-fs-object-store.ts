@@ -1,4 +1,4 @@
-// From marinoscar/kvox examples/bare-host/src/ports/local-fs-object-store.ts (kvox commit in vendor/kvox/SOURCE.json). A host binding; keep it in step with the bare host.
+// From marinoscar/kvox examples/bare-host/src/ports/local-fs-object-store.ts (kvox tag kvox-packages-v0.1.0-next.0). A host binding; keep it in step with the bare host.
 // Desktop changes (marinoscar/kvox#583): bytes under `<userData>/vault`, and every partial file (upload parts,
 // assembly, the temp file of `put`) under `<userData>/tmp/parts`, so the vault only ever holds whole objects.
 import { createHmac, randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';

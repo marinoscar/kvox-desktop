@@ -1,4 +1,4 @@
-// From marinoscar/kvox examples/bare-host/src/ports/pg-table-jobs.ts (kvox commit in vendor/kvox/SOURCE.json). A host binding.
+// From marinoscar/kvox examples/bare-host/src/ports/pg-table-jobs.ts (kvox tag kvox-packages-v0.1.0-next.0). A host binding.
 // Desktop adds what the bare host left out (marinoscar/kvox#583): see "WHAT DESKTOP ADDS" below.
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';

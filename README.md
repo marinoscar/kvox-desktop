@@ -179,12 +179,11 @@ src/server/      Utility process: Nest 11 + Fastify 5 on 127.0.0.1, PGlite, serv
   ports/         One adapter per port (below)
   backup/        .kvoxbackup export and restore, run as jobs
 src/shared/      Main <-> server message types
-scripts/         prepare-db.mjs (schema, migrations, client), vendor-kvox-packages.mjs,
+scripts/         prepare-db.mjs (schema, migrations, client),
                  dist.mjs (installers, signed when the secrets exist), packaged-app.mjs (asar and fuse
                  checks, the e2e copy), release-files.mjs (latest-mac.yml merge, SHA256SUMS, publish gate)
 build/           Packaging resources: macOS entitlements, the NSIS "Remove my data" step, the AppArmor profile
 .github/         ci.yml (every PR: four runners, unsigned installers, e2e on the packaged app), release.yml (v* tags)
-vendor/kvox/     The five @marinoscar/kvox-* tarballs (temporary, see below)
 tests/unit/      Vitest: the ports conformance kit, jobs (timeouts, back-off, a real kill mid-job), egress, secrets, backup
 tests/crash/     The child process the crash-recovery test kills
 tests/unit/import.test.ts  every import kind against the real local server
@@ -339,15 +338,13 @@ Then: tag `v0.0.2-rc.1`, check the draft; tag `v0.0.2-rc.2` with the update sett
 
 Pin the `@marinoscar/kvox-*` packages to exact versions and bump them together; they are one release group. `@marinoscar/platform-db` is pinned to `0.1.0-next.5`, the version `@marinoscar/kvox-db` was tested with.
 
-**Temporary: the kvox packages are vendored.** Until marinoscar/kvox#577 publishes them to npm, `vendor/kvox/` holds the four tarballs, built from marinoscar/kvox and packed with `npm pack` (as `examples/bare-host/run.mjs --from pack` does). `vendor/kvox/SOURCE.json` records the kvox commit and each tarball's SHA-256; `package.json` depends on them through `file:` paths. To refresh:
+**The kvox packages come from npm.** `package.json` pins `@marinoscar/kvox-ai`, `-api`, `-contract`, `-db` and `-web` to one exact version (`0.1.0-next.0`, published with provenance on the `next` dist-tag). Bump all five together:
 
 ```bash
-npm run vendor:kvox                       # clones marinoscar/kvox main, builds, packs
-npm run vendor:kvox -- --kvox ../kvox     # or from an existing checkout
-npm install                               # then commit vendor/kvox/ and package-lock.json together
+npm install --save-exact @marinoscar/kvox-ai@<v> @marinoscar/kvox-api@<v> @marinoscar/kvox-contract@<v> @marinoscar/kvox-db@<v> @marinoscar/kvox-web@<v>
 ```
 
-When the packages are on npm, replace the `file:` specs with exact versions and delete `vendor/` and the script.
+The release procedure is `docs/runbooks/release-kvox-packages.md` in marinoscar/kvox.
 
 ## Database migrations
 
