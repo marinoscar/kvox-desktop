@@ -122,6 +122,37 @@ Notes > **Import…** opens the system file dialog; dropping files anywhere on t
 
 The file's content decides, not its name (`detectKvoxImport` in `@marinoscar/kvox-contract/notes`); the formats are read by the packages, never here. A file KVox cannot use (audio, video, a foreign JSON) gets the server's own explanation. Size limits are the slices': 5 MiB for a note, 25 MiB for a transcript, `ai.maxDocumentBytes` (10 MiB) for a document. There is no transcription: audio and video are refused.
 
+## Knowledge graph and asking questions
+
+The graph, graph-extraction, graph-rdf and Ask slices of `@marinoscar/kvox-api` run in the local server (`src/server/app.module.ts`). Their screens come from `@marinoscar/kvox-web/graph` and `/ask` (`src/renderer/src/routes.tsx`). Desktop adds no graph logic; it only wires them.
+
+| Bar item | Screen | What you do there |
+|---|---|---|
+| **Knowledge** | The graph index, an entity page, the explorer, the overview | Browse people, organizations and meetings; on a person, **Set manager**, **Set employer** or **Add role**, and remove a wrong one |
+| **Review** | The proposals waiting for review | Open a note's proposal, accept or reject rows, **Send to graph** |
+| **Ask** | Conversations | Ask a question; the answer cites the meetings and facts it used |
+
+How facts get in:
+
+1. A note becomes ready (generated, or imported) and the graph extracts it (`kg.extract`). This is on by default, and it uses your AI provider like note generation does.
+2. Named speakers in an imported transcript become people automatically (`kg.speaker_link`), each with an `ATTENDED` link to the meeting.
+3. You review the proposal. Nothing enters the graph until you send it.
+4. Anything a meeting never said, you can set by hand on the person's page. Each manual edit is stored with its own evidence ("Set by hand"), and Ask cites it that way.
+
+Ask answers from the graph through the packages' tools (`search`, `list_commitments`, `neighbors`, `timeline`, …). It never writes SQL. It needs a model with tool calling: OpenAI or an OpenAI-compatible server. GitHub Copilot is planned without Ask. The reference questions, answered by the e2e test (`tests/e2e/graph-ask.spec.ts`) on synthetic meetings:
+
+| Question | How it is answered |
+|---|---|
+| What are the action items from Joe? | `search(Joe)` → `list_commitments(Joe, owned_by, open)`, citing the meeting where he committed |
+| What meetings have we had with Jenny's boss? | `search(Jenny)` → `neighbors(Jenny, REPORTS_TO)` → `timeline(boss, meeting)`, citing the reporting line and the meetings |
+
+Host duties Desktop carries for the graph:
+
+- The system `ai` namespace declares `graphEnabled`, **on** by default here, and `reasoningEffort`.
+- An hourly housekeeping timer (`src/server/housekeeping.ts`) calls the four enqueuers, because every slice runs with `schedules: false`.
+- The RDF peers (`n3`, `jsonld`, `rdf-validate-shacl`) and the `graphology` layout peers are installed.
+- The SHACL validation of a graph import runs in a utility process (`src/main/shacl-validate.ts`, wired through `shacl.run`). The RunAsNode fuse is off, so the package's default of spawning the binary as Node cannot work.
+
 ## AI providers
 
 Settings > AI provider. `KVOX_AI` is the packages' own `createKvoxAi` over `createDirectRuntime` (`@marinoscar/kvox-ai`), with the platform's provider adapters (`@marinoscar/platform-api/ai`, an interim dependency until marinoscar/kvox#578) and the key read from `KVOX_SECRETS` on every call (`src/server/ai/`).
@@ -141,9 +172,10 @@ src/main/        Electron main process: window, kvox:// scheme, window egress gu
                  safeStorage and Notification for the server, backup dialogs, import (dialog, dropped files),
                  migration utility processes (node-scripts.ts), opt-in updates (updates.ts, update-policy.ts)
 src/preload/     Preload bridge (kvoxDesktop: connection, data folder, backup dialogs, secret storage, import, updates)
-src/renderer/    React app: KvoxWebHost over loopback, kvox-web notes screens, settings cards (settings/registry.tsx),
-                 the Import action and drop target (import/)
-src/server/      Utility process: Nest 11 + Fastify 5 on 127.0.0.1, PGlite, server egress guard
+src/renderer/    React app: KvoxWebHost over loopback, kvox-web notes, graph and Ask screens (routes.tsx),
+                 settings cards (settings/registry.tsx), the Import action and drop target (import/)
+src/server/      Utility process: Nest 11 + Fastify 5 on 127.0.0.1, PGlite, server egress guard,
+                 the housekeeping timer (housekeeping.ts), the SHACL runner (shacl-runner.ts)
   ports/         One adapter per port (below)
   backup/        .kvoxbackup export and restore, run as jobs
 src/shared/      Main <-> server message types
@@ -152,12 +184,14 @@ scripts/         prepare-db.mjs (schema, migrations, client), vendor-kvox-packag
                  checks, the e2e copy), release-files.mjs (latest-mac.yml merge, SHA256SUMS, publish gate)
 build/           Packaging resources: macOS entitlements, the NSIS "Remove my data" step, the AppArmor profile
 .github/         ci.yml (every PR: four runners, unsigned installers, e2e on the packaged app), release.yml (v* tags)
-vendor/kvox/     The four @marinoscar/kvox-* tarballs (temporary, see below)
+vendor/kvox/     The five @marinoscar/kvox-* tarballs (temporary, see below)
 tests/unit/      Vitest: the ports conformance kit, jobs (timeouts, back-off, a real kill mid-job), egress, secrets, backup
 tests/crash/     The child process the crash-recovery test kills
 tests/unit/import.test.ts  every import kind against the real local server
-tests/e2e/       Playwright for Electron (smoke, window egress and settings, import by dialog and drag and drop, opt-in updates)
-tests/fixtures/  Synthetic import fixtures (a PDF transcript, a transcript JSON, a note export)
+tests/e2e/       Playwright for Electron (smoke, window egress and settings, import by dialog and drag and drop, opt-in updates,
+                 the graph and the Ask reference questions)
+tests/support/   The OpenAI-compatible loopback mock and its scripted model (the package's scenario model)
+tests/fixtures/  Synthetic fixtures: import (a PDF transcript, a transcript JSON, a note export) and graph (three meetings)
 ```
 
 ### Ports

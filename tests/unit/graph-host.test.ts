@@ -5,6 +5,10 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { describeGraphConformance } from '@marinoscar/kvox-api/graph/testing';
+import { describeGraphExtractionConformance } from '@marinoscar/kvox-api/graph-extraction/testing';
+import { describeGraphRdfConformance } from '@marinoscar/kvox-api/graph-rdf/testing';
+
 import { startServer, type RunningServer } from '../../src/server/bootstrap';
 import { spawnNodeScript, type NodeScriptRequest } from '../../src/server/database';
 import { utilityProcessShaclRun } from '../../src/server/shacl-runner';
@@ -18,7 +22,10 @@ import { ROOT, fakeCipher, removeQuietly } from './support/database';
 //     back from the file it writes, both are removed, a failed run is an error;
 //   - the server as bootstrap starts it: the graph and Ask routes answer for the
 //     local user, `ai.graphEnabled` is on, and one housekeeping round calls the
-//     four enqueuers.
+//     four enqueuers;
+//   - the slices' own conformance kits over the handlers that server registered
+//     (job types, profiles, server-only AI jobs, a `sensitive` PersonFact never
+//     embedded or exported, rate limits), with nothing opted out.
 // =============================================================================
 
 describe('utilityProcessShaclRun', () => {
@@ -131,3 +138,33 @@ describe('the graph and Ask on the Desktop server', () => {
     if (existsSync(built)) expect(existsSync(join(ROOT, 'out', 'main', 'shacl-validate.js'))).toBe(true);
   });
 });
+
+// The handlers of a server started for the kits (its own data folder).
+let kitServer: RunningServer | undefined;
+let kitDataDir: string | undefined;
+async function kitHandlers() {
+  if (!kitServer) {
+    kitDataDir = mkdtempSync(join(tmpdir(), 'kvox-graph-kits-'));
+    kitServer = await startServer({
+      appRoot: ROOT,
+      userDataDir: kitDataDir,
+      runNodeScript: spawnNodeScript(process.execPath),
+      token: randomBytes(32).toString('base64url'),
+      allowedOrigins: ['kvox://app'],
+      log: () => undefined,
+      appVersion: '0.0.0-test',
+      cipher: fakeCipher(),
+      showNotification: () => undefined,
+      requestRestart: () => undefined,
+    });
+  }
+  return { handlers: kitServer.jobHandlers() };
+}
+afterAll(async () => {
+  await kitServer?.close().catch(() => undefined);
+  if (kitDataDir) removeQuietly(kitDataDir);
+});
+
+describeGraphConformance('desktop', kitHandlers, { describe, it, expect });
+describeGraphExtractionConformance('desktop', kitHandlers, { describe, it, expect });
+describeGraphRdfConformance('desktop', kitHandlers, { describe, it, expect });

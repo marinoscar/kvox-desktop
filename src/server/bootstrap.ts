@@ -9,6 +9,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 
 import { KvoxEventEmitterEvents } from '@marinoscar/kvox-api/core';
+import type { KvoxJobHandler } from '@marinoscar/kvox-api/ports';
 
 import { DESKTOP_AI_SETTINGS_NAMESPACE } from './ai/desktop-ai-settings.js';
 import { DesktopAi, loadProviderAdapters, type DesktopAiAdapters } from './ai/desktop-ai.js';
@@ -99,6 +100,8 @@ export interface RunningServer {
   readonly egress: EgressGuard;
   /** The housekeeping timer; `runOnce()` queues one round (tests). */
   readonly housekeeping: Housekeeping;
+  /** The job handlers the slices registered (the conformance kits, tests). */
+  jobHandlers(): readonly KvoxJobHandler[];
   close(): Promise<void>;
 }
 
@@ -197,8 +200,13 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     );
 
     // The renderer is another origin (kvox://app, or the dev server): allow exactly it.
+    // `credentials: true` because the packaged SSE reader (`createFetchSseConnect`) fetches
+    // with `credentials: 'include'`; without it the browser drops every stream (a note's
+    // generation, an Ask answer) and the page only catches up on a reload. Nothing here
+    // sets a cookie: the per-launch bearer token is still the only credential.
     app.enableCors({
       origin: [...options.allowedOrigins],
+      credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
       allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'Last-Event-ID', 'If-None-Match'],
       exposedHeaders: ['Content-Disposition', 'ETag'],
@@ -249,6 +257,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       timings,
       egress,
       housekeeping,
+      jobHandlers: () => running.jobs.registeredHandlers(),
       async close() {
         await running.housekeeping.stop();
         await running.jobs.stop();

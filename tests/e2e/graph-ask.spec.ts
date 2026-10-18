@@ -47,6 +47,7 @@ const userDataDir = mkdtempSync(join(tmpdir(), 'kvox-e2e-graph-'));
 const requests: string[] = [];
 const mainLog: string[] = [];
 const results: Record<string, unknown> = {};
+const consoleErrors: string[] = [];
 let app: ElectronApplication | undefined;
 let provider: OpenAiCompatibleMock | undefined;
 
@@ -126,13 +127,14 @@ async function importAndCommit(page: Page, meeting: (typeof MEETINGS)[number]): 
     (detail) => detail?.proposal?.proposal?.status === 'draft',
     `the draft proposal of "${meeting.title}"`,
   );
+  // The note page read "no proposal" before the extraction started and does not poll for one: reload.
   await page.goto(page.url().replace(/#.*$/, `#/notes/${noteId}?review=1`));
-  const accept = page.getByRole('button', { name: /^Accept all / });
-  await expect(accept.first()).toBeVisible();
-  while ((await accept.count()) > 0) {
-    await accept.first().click();
-  }
+  await page.reload();
   const send = page.getByRole('button', { name: /^Send to graph \(\d+\)$/ });
+  await expect(send).toBeVisible();
+  // Rows the slice prechecks are accepted already; accept whatever group is still undecided.
+  const accept = page.getByRole('button', { name: /^Accept all / });
+  for (const button of await accept.all()) if (await button.isEnabled()) await button.click();
   await expect(send).toBeEnabled();
   await send.click();
   await until(
@@ -144,7 +146,7 @@ async function importAndCommit(page: Page, meeting: (typeof MEETINGS)[number]): 
 }
 
 /** Asks in the Ask page, waits for the turn and answers the stored assistant message. */
-async function ask(page: Page, question: string): Promise<AskAnswer> {
+async function ask(page: Page, question: string, key: string = question): Promise<AskAnswer> {
   await page.goto(page.url().replace(/#.*$/, '#/ask'));
   const box = page.getByPlaceholder('Ask about your meetings, people and projects…');
   await expect(box).toBeVisible();
@@ -156,13 +158,13 @@ async function ask(page: Page, question: string): Promise<AskAnswer> {
     () => api<{ messages: { items?: AskAnswer[] } | AskAnswer[] }>(page, `/ask/conversations/${conversationId}`),
     (d) => {
       const messages = (Array.isArray(d.messages) ? d.messages : (d.messages.items ?? [])) as Array<AskAnswer & { role: string }>;
-      return messages.some((m) => m.role === 'assistant' && m.status !== 'running' && m.status !== 'pending');
+      return messages.some((m) => m.role === 'assistant' && (m.status === 'complete' || m.status === 'failed'));
     },
     `the answer to "${question}"`,
   );
   const messages = (Array.isArray(detail.messages) ? detail.messages : (detail.messages.items ?? [])) as Array<AskAnswer & { role: string }>;
   const answer = messages.filter((m) => m.role === 'assistant').at(-1)!;
-  results[question] = {
+  results[key] = {
     status: answer.status,
     content: answer.content,
     toolCalls: answer.toolCalls.map((c) => ({ name: c.name, summary: c.summary, error: c.error })),
@@ -172,6 +174,8 @@ async function ask(page: Page, question: string): Promise<AskAnswer> {
 }
 
 test('the reference questions are answered with citations, and a manager set by hand answers the third', async () => {
+  // Three imports, notes and extractions, four Ask turns and an RDF round trip, on the packaged app.
+  test.setTimeout(900_000);
   const executablePath = process.env.KVOX_E2E_EXECUTABLE;
   app = await electron.launch({
     ...(executablePath ? { executablePath, args: [] } : { args: [ROOT] }),
@@ -182,6 +186,10 @@ test('the reference questions are answered with citations, and a manager set by 
   app.process().stderr?.on('data', (chunk: Buffer) => mainLog.push(...chunk.toString().split('\n').filter(Boolean)));
   app.context().on('request', (request) => requests.push(request.url()));
   const page = await app.firstWindow();
+  // A blocked request (CORS) is a console error: none may happen.
+  page.on('console', (message) => {
+    if (message.type() === 'error' && /CORS|blocked/i.test(message.text())) consoleErrors.push(message.text().slice(0, 300));
+  });
   await expect(page.getByRole('heading', { name: 'Notes', level: 1 })).toBeVisible({ timeout: 180_000 });
   await configureAiProvider(page, { baseUrl: provider!.baseUrl, apiKey: 'sk-e2e-graph-0123456789abcdef' });
 
@@ -198,14 +206,14 @@ test('the reference questions are answered with citations, and a manager set by 
   // ---- ATTENDED from the named speakers (the D4 leftover) ------------------
   const attended: Record<string, string[]> = {};
   for (const meeting of meetings.items) {
-    const hood = await api<{ nodes: Array<{ id: string; label: string }>; edges: Array<{ type: string; fromId?: string; from?: string; toId?: string; to?: string }> }>(
+    const hood = await api<{ nodes: Array<{ id: string; label: string }>; edges: Array<{ type: string; source: string; target: string }> }>(
       page,
       `/graph/entities/${meeting.id}/neighborhood?relationTypes=ATTENDED`,
     );
     const label = new Map(hood.nodes.map((n) => [n.id, n.label]));
     attended[meeting.label] = hood.edges
       .filter((e) => e.type === 'ATTENDED')
-      .map((e) => label.get((e.fromId ?? e.from) as string) ?? '?')
+      .map((e) => label.get(e.source) ?? '?')
       .sort();
   }
   results.attended = attended;
@@ -222,7 +230,10 @@ test('the reference questions are answered with citations, and a manager set by 
   expect(actionItems.citations.every((c) => c.valid)).toBe(true);
   expect(actionItems.citations.find((c) => c.kind === 'entity')?.label).toBe('Joe Park');
   expect(actionItems.citations.filter((c) => c.kind === 'evidence').map((c) => c.label)).toEqual([MEETINGS[0].title]);
-  await expect(page.getByRole('button', { name: `Open ${MEETINGS[0].title}` }).or(page.getByRole('link', { name: `Open ${MEETINGS[0].title}` })).first()).toBeVisible();
+  // The answer streamed into the page (no reload), its citation chip naming the meeting.
+  const thread = page.getByRole('region', { name: 'Conversation' });
+  await expect(thread.getByText('Send the budget draft').first()).toBeVisible();
+  await expect(thread.getByRole('button', { name: `Source 1: ${MEETINGS[0].title}` })).toBeVisible();
 
   // ---- "What meetings have we had with Jenny's boss?" ----------------------
   const bossMeetings = await ask(page, QUESTIONS.bossMeetings);
@@ -238,7 +249,7 @@ test('the reference questions are answered with citations, and a manager set by 
   expect(bossMeetings.citations.filter((c) => c.kind === 'evidence').every((c) => c.label === MEETINGS[0].title)).toBe(true);
 
   // ---- No meeting says whom Priya reports to --------------------------------
-  const before = await ask(page, QUESTIONS.manualBossMeetings);
+  const before = await ask(page, QUESTIONS.manualBossMeetings, `${QUESTIONS.manualBossMeetings} (before the manual edit)`);
   expect(before.content).not.toContain(MEETINGS[2].title);
 
   // ---- Set her manager by hand on her entity page ---------------------------
@@ -301,6 +312,7 @@ test('the reference questions are answered with citations, and a manager set by 
     return parsed.hostname !== '127.0.0.1';
   });
   expect(outside, 'requests to a host other than 127.0.0.1').toEqual([]);
+  expect(consoleErrors, 'requests the window refused (CORS)').toEqual([]);
   expect(mainLog.filter((line) => line.includes('egress blocked')), 'requests the egress guard cancelled').toEqual([]);
   expect(mainLog.filter((line) => /job .* failed|kg\.\w+ failed/i.test(line)), 'failed graph jobs').toEqual([]);
 });
