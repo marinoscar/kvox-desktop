@@ -1,8 +1,8 @@
 {
   "$comment": "Written by scripts/vendor-kvox-packages.mjs. Temporary until the packages are on npm (marinoscar/kvox#577).",
   "repository": "https://github.com/marinoscar/kvox",
-  "commit": "c65b9ebb9f9d2f898f3034a6a51565ff53e41eea",
-  "vendoredAt": "2026-10-18T00:44:06.643Z",
+  "commit": "603344889fc6f4cea8b6748d919bdfb8fe35af92",
+  "vendoredAt": "2026-10-18T01:26:24.688Z",
   "tarballs": {
     "@marinoscar/kvox-contract": {
       "file": "marinoscar-kvox-contract-0.0.0.tgz",
