@@ -63,10 +63,13 @@ jobs:
         include:
           - os: windows-latest
             args: --win --x64 --arm64
-          - os: macos-latest
-            args: --mac --arm64
-          - os: macos-15-intel
-            args: --mac --x64
+          # macOS is switched off for now. To build it again, uncomment these two
+          # legs (and add both runners back to ci.yml). The release job already
+          # merges latest-mac.yml whenever the Mac legs produce one.
+          # - os: macos-latest
+          #   args: --mac --arm64
+          # - os: macos-15-intel
+          #   args: --mac --x64
           - os: ubuntu-latest
             args: --linux --x64
     runs-on: ${{ matrix.os }}
@@ -283,8 +286,11 @@ jobs:
         run: |
           mkdir -p plans
           mv files/signing-*.json plans/
-          node scripts/release-files.mjs merge-mac files/latest-mac.yml files/latest-mac-*.yml
-          rm files/latest-mac-*.yml
+          # No Mac legs, no latest-mac-*.yml: nothing to merge.
+          if ls files/latest-mac-*.yml >/dev/null 2>&1; then
+            node scripts/release-files.mjs merge-mac files/latest-mac.yml files/latest-mac-*.yml
+            rm files/latest-mac-*.yml
+          fi
           node scripts/release-files.mjs gate plans | tee gate.txt
           grep '^publish=' gate.txt >> "$GITHUB_OUTPUT"
 

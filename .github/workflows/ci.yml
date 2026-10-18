@@ -43,7 +43,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, macos-15-intel, ubuntu-latest]
+        # macOS is switched off for now: add macos-latest (Apple silicon) and
+        # macos-15-intel (Intel) back here, and in release.yml, to build it again.
+        os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
