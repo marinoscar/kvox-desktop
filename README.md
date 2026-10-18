@@ -243,8 +243,8 @@ Download from the [latest release](https://github.com/marinoscar/kvox-desktop/re
 |---|---|---|
 | Windows 10/11 (x64, arm64) | `KVox-<version>-win-setup.exe` | Installs for the current user only; no administrator prompt. One installer for both architectures |
 | Windows 10/11 (x64) | `KVox-<version>-win-x64.msi` | The same app as an MSI, for `msiexec /i`, winget or group policy. Installs for the current user. An MSI has no "Remove my data" step: uninstalling always leaves your data folder |
-| macOS 13+ (Apple silicon) | `KVox-<version>-mac-arm64.dmg` | Open the dmg, drag KVox to Applications |
-| macOS 13+ (Intel) | `KVox-<version>-mac-x64.dmg` | |
+| macOS 13+ (Apple silicon) | `KVox-<version>-mac-arm64.dmg` | **Not built for now**: releases carry no macOS files until the Mac legs are switched back on in `ci.yml` and `release.yml`. Open the dmg, drag KVox to Applications |
+| macOS 13+ (Intel) | `KVox-<version>-mac-x64.dmg` | Not built for now (see above) |
 | Ubuntu 22.04+ / Debian (x64) | `KVox-<version>-linux-amd64.deb` | **Recommended on Linux**: `sudo apt install ./KVox-<version>-linux-amd64.deb` |
 | Linux (x64) | `KVox-<version>-linux-x86_64.AppImage` | `chmod +x` and run. Needs `libfuse2` (`sudo apt install libfuse2t64` on 24.04, `libfuse2` on 22.04) |
 
