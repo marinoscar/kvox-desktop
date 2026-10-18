@@ -78,6 +78,10 @@ publish:
   repo: kvox-desktop
   releaseType: draft
 win:
+  # A placeholder icon (a white K on blue), generated for this repository:
+  # replace build/icon.ico with a real one any time. The MSI needs an icon
+  # for its shortcuts; the NSIS installer is happy either way.
+  icon: build/icon.ico
   target:
     - target: nsis
     # An MSI as well (x64 only), for people who deploy with msiexec, winget or
@@ -99,6 +103,8 @@ nsis:
 msi:
   oneClick: false
   perMachine: false
+  # WiX warnings are errors by default (-wx); they are not useful here.
+  warningsAsErrors: false
   createDesktopShortcut: true
   createStartMenuShortcut: true
   runAfterFinish: false
