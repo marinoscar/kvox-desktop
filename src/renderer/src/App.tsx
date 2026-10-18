@@ -15,13 +15,14 @@ import { KvoxWebHostProvider } from '@marinoscar/kvox-web/core/headless';
 import type { DesktopConnection } from '../../shared/protocol';
 import { createDesktopHost } from './host';
 import { ImportProvider } from './import/ImportProvider';
-import { desktopNotesRoutes, renderKvoxRoutes } from './routes';
+import { desktopKnowledgeRoutes, desktopNotesRoutes, renderKvoxRoutes } from './routes';
 import { SettingsPage } from './settings/SettingsPage';
 
 // The shell: one bar, the notes destination, the notes routes, the import
-// (the "Import…" action and a window-wide drop target, marinoscar/kvox#585) and
-// the settings page (the cards of `settings/registry.tsx`; the full settings hub
-// and theming are D3, marinoscar/kvox#584).
+// (the "Import…" action and a window-wide drop target, marinoscar/kvox#585),
+// the knowledge destinations (Knowledge: the graph index, entity pages, the
+// explorer and the overview; Review: the proposals waiting; Ask; marinoscar/kvox#586)
+// and the settings page (the cards of `settings/registry.tsx`).
 
 const theme = createTheme({ colorSchemes: { light: true, dark: true } });
 
@@ -40,6 +41,15 @@ export function App({ connection }: { connection: DesktopConnection }) {
                 </Typography>
                 <Button component={RouterLink} to="/notes">
                   Notes
+                </Button>
+                <Button component={RouterLink} to="/graph">
+                  Knowledge
+                </Button>
+                <Button component={RouterLink} to="/graph/review">
+                  Review
+                </Button>
+                <Button component={RouterLink} to="/ask">
+                  Ask
                 </Button>
                 <Button component={RouterLink} to="/settings/note-templates">
                   Templates
@@ -60,6 +70,7 @@ export function App({ connection }: { connection: DesktopConnection }) {
                 <Routes>
                   <Route path="/" element={<Navigate to="/notes" replace />} />
                   {renderKvoxRoutes(desktopNotesRoutes)}
+                  {renderKvoxRoutes(desktopKnowledgeRoutes)}
                   <Route path="/settings" element={<SettingsPage />} />
                   <Route path="*" element={<Navigate to="/notes" replace />} />
                 </Routes>

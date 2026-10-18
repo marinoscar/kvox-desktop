@@ -10,6 +10,7 @@ import { defineConfig, swcPlugin } from 'electron-vite';
 // main     out/main/index.js   the Electron main process
 //          out/main/server.js  the server utility process (Nest + PGlite)
 //          out/main/node-script-host.js  a migration command's utility process
+//          out/main/shacl-validate.js    one SHACL validation of the graph import
 //          Runtime dependencies stay external (`build.externalizeDeps`, the
 //          default) and ship in node_modules; SWC compiles the decorators with
 //          their metadata, which Nest's dependency injection reads.
@@ -26,6 +27,7 @@ export default defineConfig({
           index: resolve(__dirname, 'src/main/index.ts'),
           server: resolve(__dirname, 'src/server/index.ts'),
           'node-script-host': resolve(__dirname, 'src/main/node-script-host.ts'),
+          'shacl-validate': resolve(__dirname, 'src/main/shacl-validate.ts'),
         },
       },
     },

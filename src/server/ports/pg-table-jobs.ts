@@ -223,6 +223,11 @@ export class PgTableJobs implements KvoxJobsPort {
     return this.handlers.has(type);
   }
 
+  /** Every registered handler (what the slices' conformance kits inspect). */
+  registeredHandlers(): readonly KvoxJobHandler[] {
+    return [...this.handlers.values()];
+  }
+
   onSettled(listener: (event: KvoxJobSettledEvent) => void): void {
     this.listeners.push(listener);
   }

@@ -1,0 +1,65 @@
+{
+  "schema": "kvox.transcript/v1",
+  "transcript": {
+    "id": "tr_g01_weekly_sync",
+    "title": "Weekly sync with Maria Lopez",
+    "language": "en",
+    "durationMs": 20000,
+    "version": 1,
+    "author": null,
+    "createdAt": "2026-09-01T16:00:00.000Z",
+    "exportedAt": "2026-09-01T18:00:00.000Z",
+    "recordedAt": "2026-09-01T15:00:00.000Z",
+    "provider": {
+      "id": "assemblyai",
+      "model": "best"
+    },
+    "speakers": [
+      {
+        "id": "spk_a",
+        "displayName": "Maria Lopez",
+        "talkTimeMs": 5000
+      },
+      {
+        "id": "spk_b",
+        "displayName": "Jenny Kim",
+        "talkTimeMs": 5000
+      },
+      {
+        "id": "spk_c",
+        "displayName": "Joe Park",
+        "talkTimeMs": 10000
+      }
+    ],
+    "segments": [
+      {
+        "id": "seg_1",
+        "speakerId": "spk_a",
+        "startMs": 0,
+        "endMs": 5000,
+        "text": "Hi all. Jenny Kim reports to me on the platform team."
+      },
+      {
+        "id": "seg_2",
+        "speakerId": "spk_b",
+        "startMs": 5000,
+        "endMs": 10000,
+        "text": "Thanks Maria. Joe, can you send the budget draft by Friday?"
+      },
+      {
+        "id": "seg_3",
+        "speakerId": "spk_c",
+        "startMs": 10000,
+        "endMs": 15000,
+        "text": "Yes, I will send the budget draft to Maria by Friday."
+      },
+      {
+        "id": "seg_4",
+        "speakerId": "spk_c",
+        "startMs": 15000,
+        "endMs": 20000,
+        "text": "I also finished the vendor review last week."
+      }
+    ]
+  }
+}

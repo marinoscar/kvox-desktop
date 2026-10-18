@@ -1,5 +1,7 @@
 import 'reflect-metadata';
 
+import { join } from 'node:path';
+
 import multipart from '@fastify/multipart';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
@@ -7,6 +9,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 
 import { KvoxEventEmitterEvents } from '@marinoscar/kvox-api/core';
+import type { KvoxJobHandler } from '@marinoscar/kvox-api/ports';
 
 import { DESKTOP_AI_SETTINGS_NAMESPACE } from './ai/desktop-ai-settings.js';
 import { DesktopAi, loadProviderAdapters, type DesktopAiAdapters } from './ai/desktop-ai.js';
@@ -16,6 +19,7 @@ import { registerBackupJobs } from './backup/backup-jobs.js';
 import { dataFolder } from './data-folder.js';
 import { PGLITE_EXTENSIONS, createPrismaClient, startDatabase, type NodeScriptRunner } from './database.js';
 import { EgressGuard } from './egress-guard.js';
+import { Housekeeping } from './housekeeping.js';
 import { DesktopNotify } from './ports/desktop-notify.js';
 import { JsonlAudit } from './ports/jsonl-audit.js';
 import { LaunchTokenIdentity } from './ports/launch-token-identity.js';
@@ -23,6 +27,7 @@ import { LocalFsObjectStore } from './ports/local-fs-object-store.js';
 import { PgSettings } from './ports/pg-settings.js';
 import { PgTableJobs } from './ports/pg-table-jobs.js';
 import { SafeStorageSecrets, type SecretCipher } from './ports/safe-storage-secrets.js';
+import { utilityProcessShaclRun } from './shacl-runner.js';
 import { LOCAL_USER_PERMISSIONS } from './permissions.js';
 import { LOCAL_USER_ID, seedDatabase } from './seed.js';
 
@@ -54,7 +59,8 @@ import { LOCAL_USER_ID, seedDatabase } from './seed.js';
 // restore (before PGlite opens the folder), the database, the seed, the AI
 // settings (which narrow the allowlist to the configured provider's host), Nest
 // (the slices register their handlers and namespaces), the backup handlers,
-// crash recovery of the job table, and only then the job loop.
+// crash recovery of the job table, and only then the job loop and the
+// housekeeping timer (`housekeeping.ts`).
 // =============================================================================
 
 /** Options of {@link startServer}. */
@@ -63,8 +69,10 @@ export interface StartServerOptions {
   appRoot: string;
   /** `app.getPath('userData')`. */
   userDataDir: string;
-  /** Runs the migration commands (a utility process each, forked by the main process). */
+  /** Runs the migration commands and the SHACL validations (a utility process each, forked by the main process). */
   runNodeScript: NodeScriptRunner;
+  /** The SHACL validation script; default `shacl-validate.js` beside this bundle (`src/main/shacl-validate.ts`). */
+  shaclScript?: string;
   /** The per-launch token. */
   token: string;
   /** Origins allowed to call the API (the renderer's). */
@@ -90,6 +98,10 @@ export interface RunningServer {
   readonly permissions: readonly string[];
   readonly timings: Record<string, number>;
   readonly egress: EgressGuard;
+  /** The housekeeping timer; `runOnce()` queues one round (tests). */
+  readonly housekeeping: Housekeeping;
+  /** The job handlers the slices registered (the conformance kits, tests). */
+  jobHandlers(): readonly KvoxJobHandler[];
   close(): Promise<void>;
 }
 
@@ -123,6 +135,10 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     const objectStore = new LocalFsObjectStore({ prisma, vaultDir: folder.vault, partsDir: folder.uploadParts, orgId, baseUrl: () => baseUrl });
     const settings = new PgSettings(prisma);
     // THE `ai` SYSTEM NAMESPACE IS THE HOST'S TO DECLARE (kvox-ports.md 3.8); the slices only read it.
+    // `graphEnabled` is the connected-knowledge switch (`false` answers the graph's 409
+    // `graph_disabled`). The knowledge graph is what Desktop is for, so it defaults ON here
+    // (the web edition defaults it off for an administrator to turn on). `reasoningEffort` is
+    // the graph's fallback when a model target names none.
     settings.registerNamespace({
       scope: 'system',
       name: 'ai',
@@ -130,8 +146,10 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         maxInputTokens: z.number().int().positive().nullable().default(null),
         maxOutputTokens: z.number().int().positive().nullable().default(null),
         maxDocumentBytes: z.number().int().positive().default(10 * 1024 * 1024),
+        graphEnabled: z.boolean().default(true),
+        reasoningEffort: z.enum(['none', 'low', 'medium', 'high', 'xhigh']).default('none'),
       }),
-      defaults: { maxInputTokens: null, maxOutputTokens: null, maxDocumentBytes: 10 * 1024 * 1024 },
+      defaults: { maxInputTokens: null, maxOutputTokens: null, maxDocumentBytes: 10 * 1024 * 1024, graphEnabled: true, reasoningEffort: 'none' },
     });
     settings.registerNamespace(DESKTOP_AI_SETTINGS_NAMESPACE);
     const secrets = new SafeStorageSecrets({ file: folder.secrets, cipher: options.cipher, log: options.log });
@@ -158,6 +176,12 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         objectStore,
         desktopAi,
         egress,
+        shaclRun: utilityProcessShaclRun({
+          appRoot: options.appRoot,
+          scriptPath: options.shaclScript ?? join(__dirname, 'shacl-validate.js'),
+          tmpDir: folder.tmp,
+          run: options.runNodeScript,
+        }),
         ports: {
           ai: { useValue: desktopAi.port },
           objectStore: { useValue: objectStore },
@@ -176,8 +200,13 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     );
 
     // The renderer is another origin (kvox://app, or the dev server): allow exactly it.
+    // `credentials: true` because the packaged SSE reader (`createFetchSseConnect`) fetches
+    // with `credentials: 'include'`; without it the browser drops every stream (a note's
+    // generation, an Ask answer) and the page only catches up on a reload. Nothing here
+    // sets a cookie: the per-launch bearer token is still the only credential.
     app.enableCors({
       origin: [...options.allowedOrigins],
+      credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
       allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'Last-Event-ID', 'If-None-Match'],
       exposedHeaders: ['Content-Disposition', 'ETag'],
@@ -215,17 +244,22 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       options.log(`jobs: ${recovered.requeued} interrupted job(s) queued again, ${recovered.failed} failed`);
     }
     jobs.start();
+    const housekeeping = new Housekeeping(app, { log: options.log });
+    housekeeping.start();
     timings.serverStart = Math.round(performance.now() - started);
     options.log(`server: listening on ${baseUrl} (${JSON.stringify(timings)})`);
 
-    const running = { jobs, app, providers };
+    const running = { jobs, app, providers, housekeeping };
     return {
       port,
       userId: LOCAL_USER_ID,
       permissions: LOCAL_USER_PERMISSIONS,
       timings,
       egress,
+      housekeeping,
+      jobHandlers: () => running.jobs.registeredHandlers(),
       async close() {
+        await running.housekeeping.stop();
         await running.jobs.stop();
         await running.app.close();
         await running.providers.close();
