@@ -17,7 +17,9 @@
 #   release  a DRAFT release with every file, the merged latest-mac.yml and
 #            SHA256SUMS (GPG-signed when the key exists); then published, but
 #            ONLY when Windows was signed and both Mac builds were signed and
-#            notarized. Otherwise the draft stays a draft, with a warning.
+#            notarized. Otherwise the draft stays a draft, with a warning,
+#            unless the repository variable ALLOW_UNSIGNED_RELEASE is "true":
+#            then it is published as a PRE-RELEASE and says it is unsigned.
 #
 # workflow_dispatch builds and checks everything without creating a release
 # (a dry run).
@@ -304,21 +306,33 @@ jobs:
         run: |
           prerelease=""
           case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          unsigned_note=""
+          if [ "${{ steps.gate.outputs.publish }}" != "true" ] && [ "${{ vars.ALLOW_UNSIGNED_RELEASE }}" = "true" ]; then
+            # An explicit opt-in (repository variable): unsigned installers are published, always as a pre-release.
+            prerelease="--prerelease"
+            unsigned_note="**These installers are not code-signed.** Windows SmartScreen and macOS Gatekeeper will warn; see README: Install. Unsigned builds do not auto-update on Windows or macOS."
+          fi
           cat > notes.md <<NOTES
           KVox Desktop ${GITHUB_REF_NAME}.
+
+          ${unsigned_note}
 
           Install: see [README: Install](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/README.md#install).
           Verify a download: \`sha256sum -c SHA256SUMS --ignore-missing\` (and \`gpg --verify SHA256SUMS.asc SHA256SUMS\` when present).
           NOTES
           gh release create "$GITHUB_REF_NAME" --draft $prerelease --title "KVox ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag files/*
 
-      - name: Publish (only when every installer is signed)
+      - name: Publish (every installer signed, or ALLOW_UNSIGNED_RELEASE is "true")
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ steps.gate.outputs.publish }}" = "true" ]; then
             gh release edit "$GITHUB_REF_NAME" --draft=false
             echo "Published ${GITHUB_REF_NAME}." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${{ vars.ALLOW_UNSIGNED_RELEASE }}" = "true" ]; then
+            gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease
+            echo "::warning title=Unsigned release::published as a pre-release with UNSIGNED installers (ALLOW_UNSIGNED_RELEASE=true): $(grep '^reason=' gate.txt | cut -d= -f2- | paste -sd ';' -)"
+            { echo "### Published UNSIGNED (pre-release)"; grep '^reason=' gate.txt | sed 's/^reason=/- /'; } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "::warning title=Not published::the release stays a draft: $(grep '^reason=' gate.txt | cut -d= -f2- | paste -sd ';' -)"
             { echo "### Draft only"; grep '^reason=' gate.txt | sed 's/^reason=/- /'; } >> "$GITHUB_STEP_SUMMARY"
