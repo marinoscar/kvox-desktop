@@ -242,6 +242,7 @@ Download from the [latest release](https://github.com/marinoscar/kvox-desktop/re
 | OS | File | Notes |
 |---|---|---|
 | Windows 10/11 (x64, arm64) | `KVox-<version>-win-setup.exe` | Installs for the current user only; no administrator prompt. One installer for both architectures |
+| Windows 10/11 (x64) | `KVox-<version>-win-x64.msi` | The same app as an MSI, for `msiexec /i`, winget or group policy. Installs for the current user. An MSI has no "Remove my data" step: uninstalling always leaves your data folder |
 | macOS 13+ (Apple silicon) | `KVox-<version>-mac-arm64.dmg` | Open the dmg, drag KVox to Applications |
 | macOS 13+ (Intel) | `KVox-<version>-mac-x64.dmg` | |
 | Ubuntu 22.04+ / Debian (x64) | `KVox-<version>-linux-amd64.deb` | **Recommended on Linux**: `sudo apt install ./KVox-<version>-linux-amd64.deb` |
@@ -254,7 +255,7 @@ sha256sum -c SHA256SUMS --ignore-missing          # Linux; macOS: shasum -a 256 
 gpg --verify SHA256SUMS.asc SHA256SUMS            # when the release has a signature
 ```
 
-On Windows: `Get-FileHash .\KVox-<version>-win-setup.exe -Algorithm SHA256` and compare with the line in `SHA256SUMS`.
+On Windows: `Get-FileHash .\KVox-<version>-win-setup.exe -Algorithm SHA256` (or the `.msi`) and compare with the line in `SHA256SUMS`.
 
 **Ubuntu 24.04 and AppArmor.** Ubuntu 24.04 restricts unprivileged user namespaces, which the Chromium sandbox needs. The `.deb` installs an AppArmor profile (`/etc/apparmor.d/kvox-desktop`, from `build/linux/kvox-desktop.apparmor`) that grants them to `/opt/KVox/kvox-desktop` only, and loads it; on 22.04 the profile is skipped (no AppArmor ABI 4.0) and not needed. The AppImage cannot install a profile: on 24.04 prefer the `.deb`, or add an equivalent profile for the AppImage's path yourself. Never run KVox with `--no-sandbox`.
 
@@ -312,6 +313,8 @@ CI checks each build: `node scripts/packaged-app.mjs verify` (layout and fuses o
 Tag `v<version>` (it must equal `package.json`'s `version`; a `-` makes it a pre-release, e.g. `v0.1.0-rc.1`) and push the tag. `.github/workflows/release.yml` builds on `windows-latest`, `macos-latest` (arm64), `macos-15-intel` (x64) and `ubuntu-latest`, signs and notarizes what its secrets allow, verifies signatures (`signtool verify /pa`, `codesign`, `spctl -a -vv`, `stapler validate`, `dpkg -I`), runs the packaged smoke test, and creates a **draft** release with every file, the merged `latest-mac.yml` and `SHA256SUMS`. It publishes the release only when Windows was signed and both Mac builds were signed and notarized; otherwise it stays a draft with a warning saying what was missing. A manual run (`workflow_dispatch`) builds and checks without releasing.
 
 Without secrets everything still builds, unsigned, and each runner says so (`::notice` / `::warning` lines and the job summary).
+
+**Releasing without code signing.** Signing is optional. To publish installers that are not code-signed, set the repository variable `ALLOW_UNSIGNED_RELEASE` to `true` (Settings > Secrets and variables > Actions > Variables). A tag then publishes the release as a **pre-release**, its notes say the installers are unsigned, and the job summary lists what was not signed. Without that variable an unsigned build stays a draft. What users see: Windows SmartScreen asks them to choose "More info", then "Run anyway"; on macOS Gatekeeper blocks the app until it is opened once from the context menu (or the quarantine flag is cleared); Linux is unaffected. Unsigned builds do not auto-update on Windows or macOS (see "Updates" below); Linux does. Verify any download against `SHA256SUMS`.
 
 What the owner configures, in the repository's **Settings > Environments > `release`** (create it; under "Deployment branches and tags" allow `v*` tags, and `main` if you want manual dry runs):
 

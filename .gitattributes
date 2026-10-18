@@ -1,2 +1,4 @@
 # The AppArmor profile is copied into the .deb as is: LF on every checkout.
 build/linux/* text eol=lf
+# The PNG icon is binary: never convert line endings in it.
+build/linux/*.png binary
