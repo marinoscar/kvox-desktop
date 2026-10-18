@@ -1,16 +1,9 @@
-import { BadRequestException, Module } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
+import { BadRequestException } from '@nestjs/common';
 
 import { createDirectRuntime, createKvoxAi, type KvoxAiModelState, type KvoxAiProviderKey, type KvoxTaskModelSource } from '@marinoscar/kvox-ai';
 import type { KvoxAiPort, KvoxSecretStatus, KvoxSecretsPort, KvoxSettingsPort } from '@marinoscar/kvox-api/ports';
-import {
-  AI_KEYLESS_API_KEY,
-  AiCoreModule,
-  AiProviderRegistry,
-  OpenAiCompatibleProviderModule,
-  OpenAiProviderModule,
-  type AiProviderAdapter,
-} from '@marinoscar/platform-api/ai';
+import { AI_KEYLESS_API_KEY, type AiProviderAdapter } from '@marinoscar/platform-ai-providers';
+import { createOpenAiAdapter, createOpenAiCompatibleAdapter } from '@marinoscar/platform-ai-providers/openai';
 
 import {
   AI_KEY_PURPOSE,
@@ -32,10 +25,9 @@ import {
 // `createKvoxAi` (`@marinoscar/kvox-ai`) over `createDirectRuntime`, and
 // supplies only the three things a host owns:
 //
-//   adapters     the platform's OpenAI and OpenAI-compatible
-//                `AiProviderAdapter`s (`@marinoscar/platform-api/ai`, an interim
-//                peer until the lean adapter package of marinoscar/kvox#578),
-//                taken from their own Nest modules' provider registry.
+//   adapters     the OpenAI and OpenAI-compatible `AiProviderAdapter`s of the
+//                lean `@marinoscar/platform-ai-providers` (marinoscar/kvox#578),
+//                built with its plain factories: no Nest, no platform runtime.
 //   keys         per call, from KVOX_SECRETS (purpose `ai`, named after the
 //                provider): the OS keychain through `safeStorage`. Nothing is
 //                cached; the runtime drops the key when the call settles.
@@ -65,22 +57,22 @@ export type DesktopAiKeyStatus = KvoxSecretStatus;
 /** An API key as `setKey` accepts it: visible ASCII, no spaces. */
 const API_KEY_PATTERN = /^[\x21-\x7e]{8,4096}$/;
 
-@Module({ imports: [AiCoreModule, OpenAiProviderModule, OpenAiCompatibleProviderModule] })
-class DesktopAiProvidersModule {}
-
-/** The provider adapters, in a Nest context of their own (their modules self-register). */
+/** The provider adapters. */
 export interface DesktopAiAdapters {
   adapters: Readonly<Record<string, AiProviderAdapter>>;
   close(): Promise<void>;
 }
 
-/** Boots the platform's OpenAI and OpenAI-compatible provider modules and takes their adapters. */
+/** Builds the OpenAI and OpenAI-compatible adapters (one each; they hold no credential). */
 export async function loadProviderAdapters(): Promise<DesktopAiAdapters> {
-  const context = await NestFactory.createApplicationContext(DesktopAiProvidersModule, { logger: ['error', 'warn'] });
-  const registry = context.get(AiProviderRegistry);
+  const built: Record<string, AiProviderAdapter> = { openai: createOpenAiAdapter(), 'openai-compatible': createOpenAiCompatibleAdapter() };
   const adapters: Record<string, AiProviderAdapter> = {};
-  for (const id of SELECTABLE_AI_PROVIDER_IDS) adapters[id] = registry.require(id);
-  return { adapters, close: () => context.close() };
+  for (const id of SELECTABLE_AI_PROVIDER_IDS) {
+    const adapter = built[id];
+    if (!adapter) throw new Error(`No adapter for the AI provider "${id}"`);
+    adapters[id] = adapter;
+  }
+  return { adapters, close: async () => {} };
 }
 
 /** Options of {@link DesktopAi}. */

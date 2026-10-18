@@ -7,7 +7,7 @@ import { z } from 'zod';
 
 import { createScriptedRuntime, describeKvoxAiConformance, type KvoxAiConformanceProvider } from '@marinoscar/kvox-ai/testing';
 import type { KvoxAiContext } from '@marinoscar/kvox-api/ports';
-import type { AiProviderAdapter } from '@marinoscar/platform-api/ai';
+import type { AiProviderAdapter } from '@marinoscar/platform-ai-providers';
 
 import {
   AI_KEY_PURPOSE,
