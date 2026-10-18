@@ -155,7 +155,7 @@ Host duties Desktop carries for the graph:
 
 ## AI providers
 
-Settings > AI provider. `KVOX_AI` is the packages' own `createKvoxAi` over `createDirectRuntime` (`@marinoscar/kvox-ai`), with the platform's provider adapters (`@marinoscar/platform-api/ai`, an interim dependency until marinoscar/kvox#578) and the key read from `KVOX_SECRETS` on every call (`src/server/ai/`).
+Settings > AI provider. `KVOX_AI` is the packages' own `createKvoxAi` over `createDirectRuntime` (`@marinoscar/kvox-ai`), with the OpenAI adapters of the lean `@marinoscar/platform-ai-providers` (marinoscar/kvox#578) and the key read from `KVOX_SECRETS` on every call (`src/server/ai/`).
 
 | Provider | Setup | Status |
 |---|---|---|
