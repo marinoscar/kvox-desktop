@@ -121,6 +121,9 @@ mac:
   # Signing: scripts/dist.mjs (CSC_LINK, APPLE_API_KEY*), or identity=null.
   artifactName: KVox-${version}-mac-${arch}.${ext}
 linux:
+  # A PNG for Linux (the .ico above is Windows-only and the Linux packager
+  # rejects it). Same placeholder as build/icon.ico.
+  icon: build/linux/icon.png
   target:
     - target: deb
     - target: AppImage
