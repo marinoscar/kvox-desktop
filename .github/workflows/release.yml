@@ -247,7 +247,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: release-test-results-${{ matrix.os }}
+          name: test-results-${{ matrix.os }}
           path: |
             test-results/
             playwright-report/
@@ -273,6 +273,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
+          # Installer artifacts only (release-<os>); test results are test-results-<os>.
           pattern: release-*
           path: files
           merge-multiple: true
