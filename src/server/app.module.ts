@@ -16,6 +16,7 @@ import { TranscriptsModule } from '@marinoscar/kvox-api/transcripts';
 import type { DesktopAi } from './ai/desktop-ai.js';
 import { DESKTOP_AI, DESKTOP_EGRESS, DesktopAiController } from './desktop-ai.controller.js';
 import { DesktopDataController } from './desktop-data.controller.js';
+import { DesktopKnowledgeController } from './desktop-knowledge.controller.js';
 import { LOCAL_FS_OBJECT_STORE, LocalStoreController, LocalUploadsController } from './local-store.controller.js';
 import type { LocalFsObjectStore } from './ports/local-fs-object-store.js';
 import type { EgressGuard } from './egress-guard.js';
@@ -111,7 +112,14 @@ export function createDesktopModule(options: DesktopModuleOptions): DynamicModul
       rdf,
       ask,
     ],
-    controllers: [LocalStoreController, LocalUploadsController, StorageObjectsController, DesktopAiController, DesktopDataController],
+    controllers: [
+      LocalStoreController,
+      LocalUploadsController,
+      StorageObjectsController,
+      DesktopAiController,
+      DesktopDataController,
+      DesktopKnowledgeController,
+    ],
     providers: [
       { provide: LOCAL_FS_OBJECT_STORE, useValue: options.objectStore },
       { provide: DESKTOP_AI, useValue: options.desktopAi },
