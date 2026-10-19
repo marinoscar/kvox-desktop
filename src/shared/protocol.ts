@@ -82,6 +82,31 @@ export type ImportOutcome =
   | { ok: true; kind: 'note' | 'transcript' | 'document'; id: string; title: string; filename: string }
   | { ok: false; filename: string; message: string; reason?: string; status?: number };
 
+/**
+ * The channels the application menu (`src/main/menu.ts`) sends to the window
+ * (marinoscar/kvox-desktop#20). The page never sends on them.
+ */
+export const MENU_CHANNELS = {
+  /** Payload: an in-app path such as `/notes/new` (see `parseMenuPath`). */
+  navigate: 'menu:navigate',
+  /** No payload: switch between the light and the dark theme. */
+  toggleTheme: 'menu:toggle-theme',
+  /** No payload: open the import dialog ("Import…"). */
+  importFiles: 'menu:import',
+} as const;
+
+/**
+ * A path from `menu:navigate`, or `null` when it is not an in-app path. The
+ * renderer validates what main sends: a single leading slash, nothing that could
+ * be read as a scheme, host or escape, and a sane length.
+ */
+export function parseMenuPath(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 200) return null;
+  if (!/^\/(?!\/)[A-Za-z0-9\-._~/?=&%]*$/.test(value)) return null;
+  if (value.split('/').includes('..')) return null;
+  return value;
+}
+
 /** The renderer's door to the shell (`window.kvoxDesktop`, set by the preload). */
 export interface KvoxDesktopBridge {
   connection(): Promise<DesktopConnection>;
@@ -103,4 +128,10 @@ export interface KvoxDesktopBridge {
   importFromDialog(): Promise<ImportOutcome[] | null>;
   /** Imports files dropped on the window (their paths are read in the preload). */
   importDropped(files: readonly File[]): Promise<ImportOutcome[]>;
+  /** The application menu asked to open an in-app path (validate it with `parseMenuPath`); returns the unsubscribe. */
+  onMenuNavigate(handler: (path: unknown) => void): () => void;
+  /** The application menu asked to switch the theme; returns the unsubscribe. */
+  onMenuToggleTheme(handler: () => void): () => void;
+  /** The application menu asked for the import dialog; returns the unsubscribe. */
+  onMenuImport(handler: () => void): () => void;
 }
