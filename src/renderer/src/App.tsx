@@ -5,10 +5,8 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import Container from '@mui/material/Container';
-import CssBaseline from '@mui/material/CssBaseline';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
-import { ThemeProvider, createTheme } from '@mui/material/styles';
 
 import { KvoxWebHostProvider } from '@marinoscar/kvox-web/core/headless';
 
@@ -19,6 +17,8 @@ import { MenuCommands } from './MenuCommands';
 import { DesktopKnowledgeProvider, useKnowledgeState } from './knowledge';
 import { desktopKnowledgeRoutes, desktopNotesRoutes, renderKvoxRoutes } from './routes';
 import { renderDesktopSettingsRoutes } from './settings/routes';
+import { DesktopThemeRoot } from './theme';
+import { ThemeModeButton } from './ThemeModeButton';
 
 // The shell: one bar, the notes destination, the notes routes, the import
 // (the "Import…" action and a window-wide drop target, marinoscar/kvox#585),
@@ -30,9 +30,9 @@ import { renderDesktopSettingsRoutes } from './settings/routes';
 // marinoscar/kvox#620) the knowledge destinations and routes are not mounted;
 // the graph itself is kept and comes back when the switch is turned on.
 
-// `data` selector: the View > Toggle light/dark menu item (and #17's toggle) switches the scheme by hand;
-// the default `media` selector would follow the OS only.
-const theme = createTheme({ cssVariables: { colorSchemeSelector: 'data' }, colorSchemes: { light: true, dark: true } });
+// The look is the brand package's, applied by the platform's ShellRoot (`DesktopThemeRoot`, theme.tsx):
+// the light / dark / system choice is its `useShellTheme`, switched by the app bar's temporary button
+// and by the View > Toggle light/dark menu item (MenuCommands).
 
 export function App({ connection }: { connection: DesktopConnection }) {
   const knowledge = useKnowledgeState(connection);
@@ -44,14 +44,14 @@ export function App({ connection }: { connection: DesktopConnection }) {
     </Box>
   );
   return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
+    <DesktopThemeRoot>
       <DesktopKnowledgeProvider value={knowledge}>
         <KvoxWebHostProvider host={host}>
           <HashRouter>
             <ImportProvider>
               <MenuCommands />
-              <AppBar position="sticky" color="default" elevation={1}>
+              {/* The page's paper and text from the theme (the grey `default` colour is MUI's, not KVox's); #18 replaces the bar. */}
+              <AppBar position="sticky" color="default" elevation={0} sx={{ bgcolor: 'background.paper', color: 'text.primary' }}>
                 <Toolbar sx={{ gap: 2 }}>
                   <Typography variant="h6" component="span">
                     KVox
@@ -75,6 +75,8 @@ export function App({ connection }: { connection: DesktopConnection }) {
                   <Button component={RouterLink} to="/settings">
                     Settings
                   </Button>
+                  <Box sx={{ flexGrow: 1 }} />
+                  <ThemeModeButton />
                 </Toolbar>
               </AppBar>
               <Container maxWidth="lg" sx={{ py: 3 }}>
@@ -97,6 +99,6 @@ export function App({ connection }: { connection: DesktopConnection }) {
           </HashRouter>
         </KvoxWebHostProvider>
       </DesktopKnowledgeProvider>
-    </ThemeProvider>
+    </DesktopThemeRoot>
   );
 }

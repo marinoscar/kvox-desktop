@@ -33,6 +33,10 @@ export async function openSettingsCard(page: Page, title: string): Promise<void>
 export async function acceptPlaintextKeysIfAsked(page: Page): Promise<void> {
   await openSettingsCard(page, 'Data and privacy');
   const plaintext = page.getByLabel('Store keys without system encryption on this device');
+  // The card renders neither answer until the main process has reported the key storage: wait for one of
+  // them, or a slow first paint reads as "no consent needed" and the key is then refused.
+  const keychain = page.getByText(/Saved API keys are encrypted by the operating system keychain|offers no keychain/);
+  await expect(plaintext.or(keychain)).toBeVisible();
   if (!(await plaintext.isVisible())) return;
   await plaintext.click();
   const dialog = page.getByRole('dialog', { name: 'Store keys without system encryption?' });

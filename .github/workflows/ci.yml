@@ -76,6 +76,13 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      # The committed icons are rasterized from @marinoscar/kvox-web/brand/assets/mark.svg. Linux only, as in
+      # tests/unit/packaging.test.ts: the files were rasterized there, and a native rasterizer's output is not
+      # asked to match bit for bit on Windows.
+      - name: Icons match the brand mark
+        if: runner.os == 'Linux'
+        run: npm run icons -- --check
+
       - name: Build the unsigned installers
         run: npm run dist
 
