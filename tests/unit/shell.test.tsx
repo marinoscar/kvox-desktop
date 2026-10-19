@@ -72,7 +72,11 @@ interface Harness {
   showAbout: ReturnType<typeof vi.fn>;
 }
 
-function install({ graphEnabled = true, railCollapsed = false }: { graphEnabled?: boolean; railCollapsed?: boolean } = {}): Harness {
+function install({
+  graphEnabled = true,
+  railCollapsed = false,
+  unavailableTasks = [],
+}: { graphEnabled?: boolean; railCollapsed?: boolean; unavailableTasks?: Array<{ task: string; reason: string }> } = {}): Harness {
   let graph = graphEnabled;
   const requests: string[] = [];
   const setRailCollapsed = vi.fn(async (_patch: { railCollapsed?: boolean }) => undefined);
@@ -90,6 +94,7 @@ function install({ graphEnabled = true, railCollapsed = false }: { graphEnabled?
     installUpdate: async () => undefined,
     importFromDialog: async () => null,
     importDropped: async () => [],
+    openExternal: async () => false,
     themeMode: async () => 'system',
     setThemeMode: async () => undefined,
     shellPreferences: async () => ({ railCollapsed }),
@@ -109,6 +114,12 @@ function install({ graphEnabled = true, railCollapsed = false }: { graphEnabled?
       if (url.pathname === '/api/desktop/knowledge') {
         if (init?.method === 'PATCH') graph = (JSON.parse(String(init.body)) as { graphEnabled: boolean }).graphEnabled;
         return new Response(JSON.stringify({ graphEnabled: graph }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url.pathname === '/api/desktop/ai') {
+        return new Response(JSON.stringify({ available: true, keyConfigured: true, models: [], defaultModel: null, unavailableTasks }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
       return new Response(JSON.stringify({ message: 'not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
     }),
@@ -170,6 +181,22 @@ describe('the destinations', () => {
 
     fireEvent.click(await screen.findByLabelText('Connected knowledge'));
     await waitFor(() => expect(railNames()).toEqual(['Notes', 'Settings']));
+  });
+
+  it('flags Ask while no provider can answer it, and leads its click to the AI provider page', async () => {
+    install({ unavailableTasks: [{ task: 'ask.respond', reason: 'tool_calling' }] });
+    await renderApp('#/settings');
+    const ask = within(mainNavigation()).getByRole('link', { name: 'Ask' });
+    await waitFor(() => expect(within(ask).getByTestId('ask-unavailable').getAttribute('title')).toMatch(/add an OpenAI key/));
+    fireEvent.click(ask);
+    await waitFor(() => expect(window.location.hash).toBe('#/settings/ai'));
+  });
+
+  it('leaves Ask unflagged when a provider can answer', async () => {
+    install();
+    await renderApp('#/settings');
+    await waitFor(() => expect(railNames()).toContain('Ask'));
+    expect(within(mainNavigation()).queryByTestId('ask-unavailable')).toBeNull();
   });
 
   it('shows the non-pinned destinations in the bottom bar of a small window, and not Settings', async () => {
@@ -295,7 +322,8 @@ describe('no platform API', () => {
     await waitFor(() => expect(railNames()).toContain('Knowledge'));
     fireEvent.click(await screen.findByRole('button', { name: 'Collapse navigation' }));
     expect(harness.requests.length).toBeGreaterThan(0);
-    expect(harness.requests.filter((request) => !request.endsWith('/api/desktop/knowledge'))).toEqual([]);
+    // Only the local server's own Desktop routes: the knowledge switch and the AI availability behind the Ask row.
+    expect(harness.requests.filter((request) => !/ \/api\/desktop\/(knowledge|ai)$/.test(request))).toEqual([]);
     expect(harness.requests.filter((request) => /user-settings|\/auth|\/users|\/org/.test(request))).toEqual([]);
   });
 

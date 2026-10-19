@@ -23,6 +23,8 @@ export type ToServer =
       token: string;
       allowedOrigins: string[];
       appVersion: string;
+      /** Test only (an unpackaged app with KVOX_E2E_COPILOT_MOCK=1): Copilot over a mock runtime and transport. */
+      copilotE2eMock?: boolean;
     }
   | { type: 'stop' }
   | { type: 'secrets-result'; id: number; ok: true; value: unknown }
@@ -159,6 +161,11 @@ export interface KvoxDesktopBridge {
   openDataFolder(): Promise<void>;
   /** Shows the About panel (the menu's Help > About KVox). */
   showAbout(): Promise<void>;
+  /**
+   * Opens `https://github.com/...` in the system browser (the Copilot card's device-code and terms
+   * links); answers false, and opens nothing, for any other address.
+   */
+  openExternal(url: string): Promise<boolean>;
   /** The application menu asked to open an in-app path (validate it with `parseMenuPath`); returns the unsubscribe. */
   onMenuNavigate(handler: (path: unknown) => void): () => void;
   /** The application menu asked to switch the theme; returns the unsubscribe. */

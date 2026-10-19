@@ -4,6 +4,7 @@ import type { PlatformApiClient, PlatformWebHost } from '@marinoscar/platform-we
 import { createKvoxNavigation } from '@marinoscar/kvox-web/shell';
 
 import type { DesktopConnection, KvoxDesktopBridge } from '../../shared/protocol';
+import { guardAskNavigation, useAskUnavailableBadge } from './askNav';
 import { useDesktopKnowledge } from './knowledge';
 import { DESKTOP_SETTINGS_PATH, DESKTOP_SETTINGS_SECTIONS } from './settings/sections';
 
@@ -41,11 +42,20 @@ registerSettingsFeature('graph', () => useDesktopKnowledge().graphEnabled === tr
  * The rows: Notes, Knowledge, Review, Ask and Settings pinned at the foot. Templates is a Settings card
  * (`/settings/note-templates`), not a destination, so it is not listed. Declared once: the shell keys on it.
  */
-export const { navigation: DESKTOP_NAVIGATION } = createKvoxNavigation({
+const { navigation: KVOX_NAVIGATION } = createKvoxNavigation({
   include: ['notes', 'graph', 'review', 'ask'],
   settingsPath: DESKTOP_SETTINGS_PATH,
   settingsSections: DESKTOP_SETTINGS_SECTIONS,
 });
+
+// The Ask row alone gets two host facts (askNav.tsx): a mark while no provider can answer, and a click that leads to
+// the AI provider page then. Everything else of the row (label, icon, path, gates) is the package's.
+export const DESKTOP_NAVIGATION: typeof KVOX_NAVIGATION = {
+  ...KVOX_NAVIGATION,
+  destinations: KVOX_NAVIGATION.destinations.map((destination) =>
+    destination.key === 'ask' ? { ...destination, badge: useAskUnavailableBadge, onClick: guardAskNavigation } : destination,
+  ),
+};
 
 /** The bridge calls the rail preference needs; the shell's settings file is the store. */
 type PreferencesBridge = Pick<KvoxDesktopBridge, 'shellPreferences' | 'setShellPreferences'>;

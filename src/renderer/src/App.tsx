@@ -10,6 +10,7 @@ import { LocalIdentityProvider } from '@marinoscar/platform-web/identity/headles
 import { ShellPreferencesProvider } from '@marinoscar/platform-web/shell/headless';
 
 import type { DesktopConnection } from '../../shared/protocol';
+import { AskAvailability } from './askNav';
 import { createDesktopHost } from './host';
 import { ImportProvider } from './import/ImportProvider';
 import { MenuCommands } from './MenuCommands';
@@ -61,6 +62,7 @@ export function App({ connection }: { connection: DesktopConnection }): ReactEle
                 <HashRouter>
                   <ImportProvider>
                     <MenuCommands />
+                    <AskAvailability />
                     <Suspense fallback={LOADING}>
                       <Routes>
                         <Route element={<KvoxAppShell navigation={DESKTOP_NAVIGATION} actions={null} userMenuItems={userMenuItems} />}>

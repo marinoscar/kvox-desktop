@@ -85,6 +85,8 @@ export interface StartServerOptions {
   logError?: (line: string) => void;
   /** The app's version, recorded in a backup. */
   appVersion: string;
+  /** The main process sets it for the Copilot e2e test only (never in a packaged app): a mock runtime and transport. */
+  copilotE2eMock?: boolean;
   /** Electron `safeStorage`, through the main process. */
   cipher: SecretCipher;
   /** Shows an OS notification (the main process). */
@@ -163,7 +165,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       adapters: providers.adapters,
       checkEgress: (host) => egress.check(host),
       // GitHub Copilot is an opt-in add-on: nothing of it is loaded until the user switches it on.
-      copilot: createDefaultCopilotHost({ folder, log: options.log }),
+      copilot: options.copilotE2eMock
+        ? (await import('./ai/copilot-e2e-host.js')).createE2eCopilotHost(folder.copilot)
+        : createDefaultCopilotHost({ folder, log: options.log }),
       log: options.log,
       onAllowedHosts: (hosts) => {
         egress.allow(hosts);

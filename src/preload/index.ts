@@ -39,6 +39,8 @@ const bridge: KvoxDesktopBridge = {
   setShellPreferences: (patch) => ipcRenderer.invoke('kvox:set-shell-preferences', patch),
   openDataFolder: () => ipcRenderer.invoke('kvox:open-data-folder'),
   showAbout: () => ipcRenderer.invoke('kvox:show-about'),
+  // The main process opens only https://github.com/... (src/main/open-external.ts).
+  openExternal: (url) => ipcRenderer.invoke('kvox:open-external', typeof url === 'string' ? url : ''),
   onMenuNavigate: (handler) => subscribe(MENU_CHANNELS.navigate, (payload) => handler(payload)),
   onMenuToggleTheme: (handler) => subscribe(MENU_CHANNELS.toggleTheme, () => handler()),
   onMenuImport: (handler) => subscribe(MENU_CHANNELS.importFiles, () => handler()),
