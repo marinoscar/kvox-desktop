@@ -3,6 +3,10 @@ import { createServer, connect, type AddressInfo } from 'node:net';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
+
+import { COPILOT_CONSENT_VERSION } from '@marinoscar/kvox-contract/copilot';
+import { DEFAULT_DESKTOP_AI_SETTINGS, allowedHostsFor, type DesktopAiSettings } from '../../src/server/ai/desktop-ai-settings';
 import { EgressBlockedError, EgressGuard, isLoopback } from '../../src/server/egress-guard';
 
 // =============================================================================
@@ -97,5 +101,34 @@ describe('EgressGuard', () => {
     ['localhost.example.com', false],
   ])('isLoopback(%j) is %s', (host, expected) => {
     expect(isLoopback(host)).toBe(expected);
+  });
+});
+
+describe('the Copilot hosts follow the setting (marinoscar/kvox-desktop#21)', () => {
+  const on = (patch: Partial<DesktopAiSettings['copilot']> = {}): DesktopAiSettings => ({
+    ...DEFAULT_DESKTOP_AI_SETTINGS,
+    copilot: { enabled: true, consentedAt: '2026-10-19T00:00:00.000Z', consentVersion: COPILOT_CONSENT_VERSION, model: null, ...patch },
+  });
+
+  it('adds exactly COPILOT_EGRESS_HOSTS while Copilot is on, next to the primary provider, and drops them when it is off', () => {
+    expect(allowedHostsFor(DEFAULT_DESKTOP_AI_SETTINGS)).toEqual(['api.openai.com']);
+    expect(allowedHostsFor(on())).toEqual(['api.openai.com', ...COPILOT_EGRESS_HOSTS]);
+    expect(allowedHostsFor({ ...on(), provider: null })).toEqual([...COPILOT_EGRESS_HOSTS]);
+    expect(allowedHostsFor(on({ enabled: false }))).toEqual(['api.openai.com']);
+  });
+
+  it('needs the CURRENT consent: enabled with no consent, or an older version, adds nothing', () => {
+    expect(allowedHostsFor(on({ consentedAt: null }))).toEqual(['api.openai.com']);
+    expect(allowedHostsFor(on({ consentVersion: '0-older' }))).toEqual(['api.openai.com']);
+    expect(allowedHostsFor(on({ consentVersion: null }))).toEqual(['api.openai.com']);
+  });
+
+  it('is what the guard enforces: the Copilot hosts connect only while allowed', () => {
+    const g = new EgressGuard({ logError: () => undefined });
+    g.allow(allowedHostsFor(on()));
+    for (const host of COPILOT_EGRESS_HOSTS) expect(g.isAllowed(host)).toBe(true);
+    expect(g.isAllowed('example.com')).toBe(false);
+    g.allow(allowedHostsFor(on({ enabled: false })));
+    for (const host of COPILOT_EGRESS_HOSTS) expect(g.isAllowed(host)).toBe(false);
   });
 });

@@ -1,14 +1,19 @@
+import { EventEmitter } from 'node:events';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { Prisma } from '@prisma/client';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { createScriptedRuntime, describeKvoxAiConformance, type KvoxAiConformanceProvider } from '@marinoscar/kvox-ai/testing';
 import type { KvoxAiContext } from '@marinoscar/kvox-api/ports';
+import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
+import { COPILOT_RUNTIME_DOWNLOAD_HOSTS } from '../../src/server/ai/copilot-sandbox';
 import type { AiProviderAdapter } from '@marinoscar/platform-ai-providers';
 
+import { COPILOT_CONSENT_VERSION } from '@marinoscar/kvox-contract/copilot';
+import type { CopilotHost } from '../../src/server/ai/copilot-host';
 import {
   AI_KEY_PURPOSE,
   DEFAULT_DESKTOP_AI_SETTINGS,
@@ -23,6 +28,7 @@ import { EgressGuard } from '../../src/server/egress-guard';
 import { PgSettings } from '../../src/server/ports/pg-settings';
 import { SafeStorageSecrets } from '../../src/server/ports/safe-storage-secrets';
 import { LOCAL_USER_ID } from '../../src/server/seed';
+import { currentConsent, enableCopilot, mockCopilotHost } from '../support/configure-copilot';
 import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
 import { fakeCipher, openTestDatabase, type TestDatabase } from './support/database';
 
@@ -43,7 +49,10 @@ import { fakeCipher, openTestDatabase, type TestDatabase } from './support/datab
 //   3. THE ALLOWLIST FOLLOWS THE SETTINGS: only the active provider's host.
 //   4. KEYS STAY IN KVOX_SECRETS: a planted key-shaped string is in no setting,
 //      response, log line, error or file outside the encrypted blob.
-//   5. COPILOT IS A DISABLED SLOT: shown, not selectable, toolCalling=false.
+//   5. COPILOT IS AN OPT-IN ADD-ON (marinoscar/kvox-desktop#21): off by default and
+//      then not even loaded, never switched on without consent, routed by
+//      capability (notes on Copilot, Ask on OpenAI or reported unavailable),
+//      signed in through the endpoints, and holding no token anywhere.
 // =============================================================================
 
 const PLANTED_KEY = 'sk-proj-PLANTEDkvox584DoNotLeakAbCdEf0123456789';
@@ -61,8 +70,14 @@ beforeAll(async () => {
   settings.registerNamespace({
     scope: 'system',
     name: 'ai',
-    schema: z.object({ maxInputTokens: z.number().nullable(), maxOutputTokens: z.number().nullable(), maxDocumentBytes: z.number() }),
-    defaults: { maxInputTokens: null, maxOutputTokens: null, maxDocumentBytes: 10 * 1024 * 1024 },
+    schema: z.object({
+      maxInputTokens: z.number().nullable(),
+      maxOutputTokens: z.number().nullable(),
+      maxDocumentBytes: z.number(),
+      // On by default, as bootstrap.ts declares it: Ask and the graph tasks are graph features.
+      graphEnabled: z.boolean().default(true),
+    }),
+    defaults: { maxInputTokens: null, maxOutputTokens: null, maxDocumentBytes: 10 * 1024 * 1024, graphEnabled: true },
   });
   settings.registerNamespace(DESKTOP_AI_SETTINGS_NAMESPACE);
   secrets = new SafeStorageSecrets({ file: join(db.userDataDir, 'secrets.bin'), cipher: fakeCipher(), log: (line) => logLines.push(line) });
@@ -79,17 +94,29 @@ async function resetSettings(patch: Partial<DesktopAiSettings> = {}): Promise<vo
   await settings.patchSystem(DESKTOP_AI_NAMESPACE, { ...DEFAULT_DESKTOP_AI_SETTINGS, ...patch }, { actorUserId: LOCAL_USER_ID });
 }
 
-function desktopAi(adapters: Readonly<Record<string, AiProviderAdapter>>, extra: { requestTimeoutMs?: number; hosts?: string[][] } = {}): DesktopAi {
-  return new DesktopAi({
+const created: DesktopAi[] = [];
+afterEach(async () => {
+  await Promise.all(created.splice(0).map((ai) => ai.close()));
+});
+
+function desktopAi(
+  adapters: Readonly<Record<string, AiProviderAdapter>>,
+  extra: { requestTimeoutMs?: number; hosts?: string[][]; copilot?: CopilotHost } = {},
+): DesktopAi {
+  const ai = new DesktopAi({
     settings,
     secrets,
     adapters,
+    ...(extra.copilot ? { copilot: extra.copilot } : {}),
+    log: (line) => logLines.push(line),
     onAllowedHosts: (hosts) => {
       extra.hosts?.push(hosts);
       logLines.push(`server: egress allowlist is loopback and ${hosts.join(', ')}`);
     },
     ...(extra.requestTimeoutMs !== undefined ? { requestTimeoutMs: extra.requestTimeoutMs } : {}),
   });
+  created.push(ai);
+  return ai;
 }
 
 async function collectText(ai: DesktopAi): Promise<string> {
@@ -367,27 +394,393 @@ describe('DesktopAi over the platform adapters', () => {
       const malformed = (await ai.testKey('openai', 'sk-has spaces PLANTEDkvox584').catch((e: unknown) => e)) as Error & { getResponse(): unknown };
       expect(malformed).toMatchObject({ status: 400 });
       expect(JSON.stringify(malformed.getResponse()) + malformed.message).not.toContain('PLANTEDkvox584');
-      await expect(ai.testKey('copilot', PLANTED_KEY)).rejects.toMatchObject({ status: 400, response: { code: 'ai_provider_unavailable' } });
+      await expect(ai.testKey('copilot', PLANTED_KEY)).rejects.toMatchObject({ status: 400, response: { code: 'ai_key_not_applicable' } });
       await expect(ai.testKey('nope', PLANTED_KEY)).rejects.toMatchObject({ status: 400 });
       expect(mock.requests).toEqual([]);
     });
   });
+});
 
-  it('shows Copilot as a disabled slot with toolCalling=false, and refuses to select it or store its key', async () => {
-    const ai = desktopAi(providers.adapters);
-    const egress = new EgressGuard({ logError: () => undefined });
-    const view = await new DesktopAiController(ai.port, ai, egress).settings();
+// ---- 5. The Copilot add-on ---------------------------------------------------------
+
+const CLAUDE = 'claude-haiku-4.5';
+const GPT = 'gpt-5-mini';
+const TOKENS = ['gho_PLANTEDcopilot0123456789abcdef', 'ghu_PLANTEDcopilot0123456789abcdef', 'github_pat_PLANTEDcopilot0123456789'];
+const PRINCIPAL = { userId: LOCAL_USER_ID, orgId: null } as never;
+
+/** A `reply` whose connection stays open until the answer is written (what the wait route reads). */
+function openReply() {
+  return { raw: Object.assign(new EventEmitter(), { writableFinished: false }) } as never;
+}
+
+describe('GitHub Copilot add-on', () => {
+  let providers: DesktopAiAdapters;
+  let mock: OpenAiCompatibleMock;
+
+  beforeAll(async () => {
+    providers = await loadProviderAdapters();
+    mock = await startOpenAiCompatibleMock('# From OpenAI\n');
+  });
+  afterAll(async () => {
+    await providers?.close();
+    await mock?.close();
+  });
+  beforeEach(async () => {
+    await resetSettings();
+    for (const id of ['openai', 'openai-compatible']) await secrets.delete(AI_KEY_PURPOSE, id);
+    mock.requests.length = 0;
+    logLines.length = 0;
+  });
+
+  function setup(options: Parameters<typeof mockCopilotHost>[0] = {}) {
+    const harness = mockCopilotHost(options);
+    const guard = new EgressGuard({ logError: (line) => logLines.push(line) });
+    // The egress wiring of bootstrap.ts: every settings change feeds the guard.
+    const wired = new DesktopAi({
+      settings,
+      secrets,
+      adapters: providers.adapters,
+      copilot: harness.host,
+      log: (line) => logLines.push(line),
+      onAllowedHosts: (hosts) => guard.allow(hosts),
+    });
+    created.push(wired);
+    const controller = new DesktopAiController(wired.port, wired, guard);
+    return { ...harness, ai: wired, guard, controller };
+  }
+
+  it('is a selectable-by-consent slot, never the primary provider, and holds no key', async () => {
+    const { ai, controller } = setup();
+    const view = await controller.settings();
     expect(view.providers.map((p) => p.id)).toEqual(['openai', 'openai-compatible', 'copilot']);
-    expect(view.providers.find((p) => p.id === 'copilot')).toMatchObject({ implemented: false, toolCalling: false, key: null, needsKey: false });
-    expect(DESKTOP_AI_PROVIDERS.find((p) => p.id === 'copilot')).toMatchObject({ implemented: false, toolCalling: false });
+    expect(view.providers.find((p) => p.id === 'copilot')).toMatchObject({ implemented: true, primary: false, toolCalling: false, key: null, needsKey: false });
+    expect(DESKTOP_AI_PROVIDERS.find((p) => p.id === 'copilot')).toMatchObject({ implemented: true, toolCalling: false });
 
+    // It is an add-on: it cannot be the primary provider, and it has no API key to store.
     await expect(ai.update({ provider: 'copilot' }, LOCAL_USER_ID)).rejects.toMatchObject({ status: 400 });
-    await expect(ai.update({ copilot: { enabled: true } }, LOCAL_USER_ID)).rejects.toMatchObject({ status: 400 });
     await expect(ai.setKey('copilot', 'gho_abcdefghijklmnop', LOCAL_USER_ID)).rejects.toMatchObject({
       status: 400,
-      response: { code: 'ai_provider_unavailable' },
+      response: { code: 'ai_key_not_applicable' },
     });
     expect((await ai.read()).provider).toBe('openai');
-    expect(await providers.adapters.copilot).toBeUndefined();
+  });
+
+  it('migrates a stored pre-Copilot setting to the defaults and never turns Copilot on', async () => {
+    const legacy = { ...DEFAULT_DESKTOP_AI_SETTINGS, copilot: { enabled: false } };
+    await db.prisma.systemSettings.upsert({
+      where: { key: DESKTOP_AI_NAMESPACE },
+      update: { value: legacy },
+      create: { key: DESKTOP_AI_NAMESPACE, value: legacy, version: 1, updatedByUserId: LOCAL_USER_ID },
+    });
+    const { ai, controller, calls } = setup();
+    expect((await ai.read()).copilot).toEqual({ enabled: false, consentedAt: null, consentVersion: null, model: null });
+    await ai.start();
+    expect(calls.prepared).toBe(0);
+    expect(await controller.copilotStatus()).toMatchObject({ enabled: false, signedIn: false, models: [], unavailableTasks: [] });
+
+
+    // A row with no copilot key at all reads the same.
+    const bare = { provider: 'openai', openai: { model: 'gpt-5.4-mini' }, openaiCompatible: DEFAULT_DESKTOP_AI_SETTINGS.openaiCompatible };
+    await db.prisma.systemSettings.update({ where: { key: DESKTOP_AI_NAMESPACE }, data: { value: bare } });
+    expect((await ai.read()).copilot).toEqual(DEFAULT_DESKTOP_AI_SETTINGS.copilot);
+  });
+
+  it('loads nothing while Copilot is off: no adapter, no runtime, no SDK, no Copilot host in the egress list', async () => {
+    const { ai, controller, calls, guard } = setup();
+    await ai.start();
+    await ai.applyEgress();
+    expect(ai.copilot.ready).toBe(false);
+    expect(providers.adapters.copilot).toBeUndefined();
+    expect(calls).toEqual({ prepared: 0, downloads: 0, transports: 0, stopped: 0, removed: [] });
+    expect(Object.keys(require.cache).filter((path) => path.includes('copilot-sdk'))).toEqual([]);
+    for (const host of COPILOT_EGRESS_HOSTS) expect(guard.isAllowed(host)).toBe(false);
+    expect((await controller.copilotStatus()).enabled).toBe(false);
+  });
+
+  it('refuses to switch on without the current consent (409 consent_required), on every route', async () => {
+    const { ai, controller, calls } = setup();
+    await expect(controller.copilotUpdate(PRINCIPAL, { enabled: true })).rejects.toMatchObject({ status: 409, response: { code: 'consent_required' } });
+    await expect(
+      controller.copilotUpdate(PRINCIPAL, { enabled: true, consentedAt: new Date().toISOString(), consentVersion: '0-old' }),
+    ).rejects.toMatchObject({ status: 409, response: { code: 'consent_required' } });
+    await expect(controller.patch(PRINCIPAL, { copilot: { enabled: true } })).rejects.toMatchObject({ status: 409, response: { code: 'consent_required' } });
+    await expect(controller.copilotUpdate(PRINCIPAL, { enabled: 'yes' })).rejects.toMatchObject({ status: 400 });
+    expect((await ai.read()).copilot.enabled).toBe(false);
+    expect(calls.prepared).toBe(0);
+
+    const status = await controller.copilotUpdate(PRINCIPAL, currentConsent());
+    expect(status).toMatchObject({ enabled: true, runtime: { state: 'ready', version: '1.0.98' } });
+    expect(calls.prepared).toBe(1);
+    expect(calls.transports).toBe(1);
+    expect(providers.adapters.copilot).toBeUndefined(); // the runtime's map is the instance's own copy
+  });
+
+  it('asks again when the consent text changes: an older consent version is off', async () => {
+    const { ai, controller, calls } = setup();
+    await ai.updateCopilot(currentConsent(), LOCAL_USER_ID);
+    // A newer text: the stored consent no longer matches.
+    await settings.patchSystem(DESKTOP_AI_NAMESPACE, { copilot: { consentVersion: '0-older' } }, { actorUserId: LOCAL_USER_ID });
+    expect(await controller.copilotStatus()).toMatchObject({ enabled: false });
+    await ai.start();
+    expect(ai.copilot.ready).toBe(false);
+    expect(calls.stopped).toBeGreaterThan(0);
+  });
+
+  it('reports a missing runtime as a state, and refuses sign-in and download politely', async () => {
+    const { ai, controller } = setup({ runtime: 'missing' });
+    const status = await controller.copilotUpdate(PRINCIPAL, currentConsent());
+    expect(status).toMatchObject({ enabled: true, signedIn: false, runtime: { state: 'missing', version: null, progress: null } });
+    await expect(controller.copilotSignIn()).rejects.toMatchObject({ status: 409, response: { code: 'runtime_not_ready' } });
+    await expect(controller.copilotRuntimeDownload()).rejects.toMatchObject({ status: 409, response: { code: 'runtime_download_unavailable' } });
+    // Generating is refused as "not configured": there is no Copilot to send to, and nothing is sent anywhere.
+    await expect(collectText(ai)).rejects.toMatchObject({ errorClass: 'not_configured' });
+  });
+
+  it('downloads the runtime on request, with progress in the status, then is ready', async () => {
+    const harness = setup({ runtime: 'downloadable' });
+    const { controller } = harness;
+    await controller.copilotUpdate(PRINCIPAL, currentConsent());
+    expect((await controller.copilotStatus()).runtime.state).toBe('missing');
+    expect(harness.calls.downloads).toBe(0); // never without the user's action
+
+    // GitHub's release hosts are reachable for the download only.
+    const releaseHost = COPILOT_RUNTIME_DOWNLOAD_HOSTS.find((host) => !COPILOT_EGRESS_HOSTS.includes(host))!;
+    expect(harness.guard.isAllowed(releaseHost)).toBe(false);
+    const started = await controller.copilotRuntimeDownload();
+    expect(started.runtime).toMatchObject({ state: 'downloading', progress: 0 });
+    expect(harness.guard.isAllowed(releaseHost)).toBe(true);
+    harness.progress(25, 100);
+    expect((await controller.copilotStatus()).runtime).toMatchObject({ state: 'downloading', progress: 0.25 });
+    harness.finishDownload();
+    await vi_waitFor(async () => expect((await controller.copilotStatus()).runtime.state).toBe('ready'));
+    expect(harness.calls.downloads).toBe(1);
+    await vi_waitFor(async () => expect(harness.guard.isAllowed(releaseHost)).toBe(false));
+
+    // The adapter built after the download serves calls at once, with no restart.
+    harness.transport.queue({ kind: 'answer', text: '# After the download\n' });
+    expect(await collectText(harness.ai)).toBe('# After the download\n');
+  });
+
+  it('cancels a download, and turning Copilot off cancels it too', async () => {
+    const harness = setup({ runtime: 'downloadable' });
+    await harness.controller.copilotUpdate(PRINCIPAL, currentConsent());
+    await harness.controller.copilotRuntimeDownload();
+    const cancelled = await harness.controller.copilotRuntimeDownloadCancel();
+    await vi_waitFor(async () => expect((await harness.controller.copilotStatus()).runtime.state).toBe('missing'));
+    expect(cancelled.enabled).toBe(true);
+
+    await harness.controller.copilotRuntimeDownload();
+    await harness.controller.copilotUpdate(PRINCIPAL, { enabled: false });
+    expect((await harness.controller.copilotStatus()).runtime.state).toBe('missing');
+  });
+
+  it('signs in through the endpoints with the mock transport: challenge, wait, then signed in; sign-out returns to signed out', async () => {
+    const { controller, transport } = setup({ signedIn: false, login: 'octocat' });
+    transport.scriptSignIn({ challenge: { kind: 'browser', url: 'https://github.com/login/oauth/authorize?client_id=x' }, outcome: 'success', login: 'monalisa' });
+    await controller.copilotUpdate(PRINCIPAL, currentConsent());
+    expect(await controller.copilotStatus()).toMatchObject({ enabled: true, signedIn: false, login: null });
+
+    await expect(controller.copilotSignInWait(openReply())).rejects.toMatchObject({ status: 409, response: { code: 'sign_in_not_started' } });
+    const challenge = await controller.copilotSignIn();
+    expect(challenge).toEqual({ kind: 'browser', url: 'https://github.com/login/oauth/authorize?client_id=x' });
+    const done = await controller.copilotSignInWait(openReply());
+    expect(done).toMatchObject({ enabled: true, signedIn: true, login: 'monalisa' });
+    expect(done.models.map((m) => m.id)).toContain(GPT);
+    expect(transport.signInCalls()).toMatchObject({ started: 1, waited: 1 });
+
+    const out = await controller.copilotSignOut();
+    expect(out).toMatchObject({ signedIn: false, login: null });
+    expect(transport.signInCalls().signedOut).toBe(1);
+  });
+
+  it('answers a device-code challenge as the wire shape, and an expired sign-in as 409 AI_KEY_REQUIRED with its reason', async () => {
+    const { controller, transport } = setup({ signedIn: false });
+    await controller.copilotUpdate(PRINCIPAL, currentConsent());
+    const device = { kind: 'device', userCode: 'ABCD-1234', verificationUri: 'https://github.com/login/device', expiresAt: new Date(Date.now() + 60_000).toISOString() } as const;
+    transport.scriptSignIn({ challenge: device, outcome: 'expired' });
+    expect(await controller.copilotSignIn()).toEqual(device);
+    await expect(controller.copilotSignInWait(openReply())).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'AI_KEY_REQUIRED', details: { signInReason: 'sign_in_expired' } },
+    });
+    expect((await controller.copilotStatus()).signedIn).toBe(false);
+  });
+
+  it('cancels the runtime sign-in when the client hangs up on the wait', async () => {
+    const { controller, transport } = setup({ signedIn: false });
+    await controller.copilotUpdate(PRINCIPAL, currentConsent());
+    transport.scriptSignIn({ outcome: 'pending' });
+    await controller.copilotSignIn();
+    const reply = openReply();
+    const waiting = controller.copilotSignInWait(reply);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    (reply as unknown as { raw: EventEmitter }).raw.emit('close');
+    await expect(waiting).rejects.toMatchObject({ response: { details: { signInReason: 'sign_in_cancelled' } } });
+    expect(transport.signInCalls().aborted).toBe(1);
+  });
+
+  it('generates a note on Copilot with the selected model, and the OpenAI side is never called', async () => {
+    const { ai, transport } = setup({ signedIn: true });
+    await ai.update({ provider: 'openai-compatible', openaiCompatible: { baseUrl: mock.baseUrl, model: 'mock-model', requiresKey: false } }, LOCAL_USER_ID);
+    await enableCopilot(ai, LOCAL_USER_ID, { model: CLAUDE });
+    transport.queue({ kind: 'answer', text: '# Notes from Copilot\n' });
+
+    expect(await collectText(ai)).toBe('# Notes from Copilot\n');
+    const [session] = transport.sessions();
+    expect(session?.config.model).toBe(CLAUDE);
+    expect(session?.config.availableTools).toEqual([]);
+    expect(session?.deleted).toBe(true);
+    expect(mock.requests).toHaveLength(0);
+    const target = await ai.port.resolveTask(CTX, 'notes.generate');
+    expect(target).toMatchObject({ provider: 'copilot', model: CLAUDE });
+  });
+
+  it('holds a native-schema model to its schema and prompts a Claude model for it, per the catalog', async () => {
+    const { ai, transport } = setup({ signedIn: true });
+    await enableCopilot(ai, LOCAL_USER_ID, { model: GPT });
+    const schema = z.object({ title: z.string() });
+    const ask = async () => {
+      const target = await ai.port.resolveTask({ ...CTX, feature: 'notes.title' }, 'notes.title');
+      return ai.port.generateStructured({ ...CTX, feature: 'notes.title' }, { target, system: 'Title it.', user: 'Budget by Friday.', schema, schemaName: 'title' });
+    };
+
+    transport.queue({ kind: 'answer', text: '{"title":"Budget"}' });
+    expect((await ask()).value).toEqual({ title: 'Budget' });
+    expect(transport.sessions()[0]?.prompts[0]?.responseSchema).toBeDefined();
+
+    await ai.updateCopilot({ model: CLAUDE }, LOCAL_USER_ID);
+    transport.queue({ kind: 'answer', text: '{"title":"Budget"}' });
+    expect((await ask()).value).toEqual({ title: 'Budget' });
+    const prompted = transport.sessions()[1];
+    expect(prompted?.config.model).toBe(CLAUDE);
+    expect(prompted?.prompts[0]?.responseSchema).toBeUndefined();
+    expect(prompted?.config.systemMessage.content).toContain('title');
+  });
+
+  it('routes Ask to OpenAI when its key is saved, and reports it unavailable (needs_tool_calling) when it is not', async () => {
+    const { ai, controller, transport } = setup({ signedIn: true });
+    await enableCopilot(ai, LOCAL_USER_ID);
+    const askCtx = { ...CTX, feature: 'ask.respond' };
+
+    // No OpenAI key: Ask is listed, with the reason, and refused as a missing key.
+    const status = await controller.copilotStatus();
+    expect(status.unavailableTasks).toEqual([{ task: 'ask.respond', reason: 'needs_tool_calling' }]);
+    expect((await controller.state(PRINCIPAL)).unavailableTasks).toEqual(status.unavailableTasks);
+    expect(await ai.port.capabilities(askCtx)).toMatchObject({ available: false, reason: 'ai_key_missing' });
+    await expect(ai.port.resolveTask(askCtx, 'ask.respond')).rejects.toMatchObject({ errorClass: 'key_missing' });
+
+    // An OpenAI key: Ask goes to OpenAI, notes stay on Copilot.
+    await ai.setKey('openai', PLANTED_KEY, LOCAL_USER_ID);
+    expect((await controller.copilotStatus()).unavailableTasks).toEqual([]);
+    expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'openai' });
+    expect(await ai.port.capabilities(askCtx)).toMatchObject({ available: true, toolCalling: true });
+    expect(await ai.port.resolveTask(CTX, 'notes.generate')).toMatchObject({ provider: 'copilot' });
+    expect(transport.sessions()).toHaveLength(0);
+  });
+
+  it('with AI off as the primary provider, Copilot serves notes and Ask is not offered', async () => {
+    const { ai, controller } = setup({ signedIn: true });
+    await ai.update({ provider: null }, LOCAL_USER_ID);
+    await enableCopilot(ai, LOCAL_USER_ID);
+    expect((await controller.copilotStatus()).unavailableTasks.map((t) => t.task)).toEqual(['ask.respond']);
+    expect(await ai.port.capabilities(CTX)).toMatchObject({ available: true });
+    expect((await ai.port.capabilities({ ...CTX, feature: 'ask.respond' })).toolCalling).toBe(false);
+  });
+
+  it('signed out: generating is refused as a missing key before anything is sent', async () => {
+    const { ai, transport } = setup({ signedIn: false });
+    await enableCopilot(ai, LOCAL_USER_ID);
+    expect(await ai.port.capabilities(CTX)).toMatchObject({ available: false, reason: 'ai_key_missing' });
+    await expect(collectText(ai)).rejects.toMatchObject({ errorClass: 'key_missing' });
+    expect(transport.sessions()).toHaveLength(0);
+  });
+
+  it('adds the Copilot hosts to the egress allowlist only while Copilot is on, and takes the adapter down when it is off', async () => {
+    const { ai, guard, calls, controller } = setup();
+    await ai.applyEgress();
+    expect(guard.allowedHosts).toEqual(['api.openai.com']);
+
+    await enableCopilot(ai, LOCAL_USER_ID);
+    expect(guard.allowedHosts).toEqual(['api.openai.com', ...COPILOT_EGRESS_HOSTS]);
+    expect((await controller.copilotStatus()).enabled).toBe(true);
+    expect(ai.copilot.ready).toBe(true);
+
+    await ai.updateCopilot({ enabled: false }, LOCAL_USER_ID);
+    expect(guard.allowedHosts).toEqual(['api.openai.com']);
+    for (const host of COPILOT_EGRESS_HOSTS) expect(guard.isAllowed(host)).toBe(false);
+    expect(ai.copilot.ready).toBe(false);
+    expect(calls.stopped).toBe(1);
+    expect(await controller.copilotStatus()).toMatchObject({ enabled: false, models: [] });
+    await expect(controller.copilotSignIn()).rejects.toMatchObject({ status: 409, response: { code: 'copilot_disabled' } });
+  });
+
+  it('removes the Copilot data only with Copilot off, and keeps the downloaded runtime unless asked', async () => {
+    const { ai, controller, calls } = setup();
+    await enableCopilot(ai, LOCAL_USER_ID);
+    await expect(controller.copilotRemoveData()).rejects.toMatchObject({ status: 409, response: { code: 'copilot_enabled' } });
+    expect(calls.removed).toEqual([]);
+
+    await ai.updateCopilot({ enabled: false }, LOCAL_USER_ID);
+    expect(await controller.copilotRemoveData()).toEqual({ removed: ['home', 'work'], keptRuntime: true });
+    expect(await controller.copilotRemoveData('true')).toEqual({ removed: ['home', 'work'], keptRuntime: false });
+    expect(calls.removed).toEqual([{ includeRuntime: false }, { includeRuntime: true }]);
+  });
+
+  it('brings Copilot back up at start when the stored settings have it on', async () => {
+    const first = setup();
+    await enableCopilot(first.ai, LOCAL_USER_ID);
+    await first.ai.close();
+    const second = setup({ signedIn: true });
+    expect(second.ai.copilot.ready).toBe(false);
+    await second.ai.start();
+    expect(second.ai.copilot.ready).toBe(true);
+    expect(second.calls.transports).toBe(1);
+  });
+
+  it('shows the allowed hosts in every status response', async () => {
+    const { controller } = setup();
+    expect((await controller.copilotStatus()).allowedHosts).toEqual(['api.openai.com']);
+    const on = await controller.copilotUpdate(PRINCIPAL, currentConsent());
+    expect(on.allowedHosts).toEqual(expect.arrayContaining([...COPILOT_EGRESS_HOSTS]));
+  });
+
+  it('keeps every token out of responses, errors, logs and files', async () => {
+    const { ai, controller, transport } = setup({ signedIn: true });
+    await enableCopilot(ai, LOCAL_USER_ID);
+    // The runtime fails with a message that carries tokens.
+    transport.queue({ kind: 'sessionError', errorType: 'authentication', statusCode: 401, message: `bad credentials ${TOKENS.join(' ')} Bearer abc.def.ghi` });
+    const failure = (await collectText(ai).catch((e: unknown) => e)) as Error;
+    transport.scriptSignIn({ startError: new Error(`cannot start ${TOKENS[0]} Authorization: Bearer abc.def.ghi`) });
+    const signInFailure = (await controller.copilotSignIn().catch((e: unknown) => e)) as Error & { getResponse(): unknown };
+    transport.setSignedIn(true);
+
+    const surfaces: Record<string, string> = {
+      error: `${failure.name}: ${failure.message} ${JSON.stringify(failure)} ${failure.stack ?? ''}`,
+      signInError: `${signInFailure.message} ${JSON.stringify(signInFailure.getResponse?.() ?? {})}`,
+      status: JSON.stringify(await controller.copilotStatus()),
+      settingsView: JSON.stringify(await controller.settings()),
+      notesState: JSON.stringify(await controller.state(PRINCIPAL)),
+      settingsRows: JSON.stringify(await db.prisma.$queryRaw(Prisma.sql`SELECT * FROM system_settings`)),
+      logs: logLines.join('\n'),
+    };
+    for (const [surface, text] of Object.entries(surfaces)) {
+      for (const token of TOKENS) expect(text, surface).not.toContain(token);
+      expect(text, surface).not.toMatch(/gho_|ghu_|github_pat_|Bearer /);
+    }
+    for (const file of readdirSync(db.userDataDir)) expect(file).not.toMatch(/token/i);
   });
 });
+
+/** Polls an assertion for a moment (a background download settling). */
+async function vi_waitFor(check: () => Promise<void>, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      await check();
+      return;
+    } catch (error) {
+      if (Date.now() > deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+}
