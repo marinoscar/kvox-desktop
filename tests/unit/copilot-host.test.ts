@@ -65,7 +65,7 @@ describe('createDefaultCopilotHost', () => {
 
   it('prefers a bundled launcher, and refuses a download that has no configured source', async () => {
     const dataFolderForTest = folder();
-    const host = createDefaultCopilotHost({ folder: dataFolderForTest, log: () => undefined, bundledRuntimePath: null });
+    const host = createDefaultCopilotHost({ folder: dataFolderForTest, log: () => undefined, bundledRuntimePath: null, download: false });
     expect(host.canDownload).toBe(false);
     await expect(host.prepareRuntime({ dataDirectory: host.dataDirectory, download: true })).rejects.toBeInstanceOf(CopilotDownloadUnavailableError);
     await expect(host.prepareRuntime({ dataDirectory: host.dataDirectory, download: false })).rejects.toMatchObject({ response: { details: { check: 'runtime_missing' } } });
@@ -73,7 +73,7 @@ describe('createDefaultCopilotHost', () => {
     const launcher = join(dataFolderForTest.root, 'bundle', 'copilot-runtime');
     mkdirSync(join(dataFolderForTest.root, 'bundle'), { recursive: true });
     writeFileSync(launcher, 'launcher');
-    const bundled = createDefaultCopilotHost({ folder: dataFolderForTest, log: () => undefined, bundledRuntimePath: launcher });
+    const bundled = createDefaultCopilotHost({ folder: dataFolderForTest, log: () => undefined, bundledRuntimePath: launcher, download: false });
     const prepared = await bundled.prepareRuntime({ dataDirectory: bundled.dataDirectory, download: false });
     expect(prepared).toMatchObject({ runtimePath: launcher, source: 'bundled', baseDirectory: join(bundled.dataDirectory, 'home') });
     // A bundled runtime is never downloaded over, even when asked.

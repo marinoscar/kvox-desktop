@@ -68,6 +68,7 @@ export function mockCopilotHost(options: MockCopilotHostOptions = {}): MockCopil
   const host: CopilotHost = {
     dataDirectory,
     canDownload: runtime === 'downloadable',
+    ...(runtime === 'missing' ? { downloadUnavailableReason: 'GitHub publishes no Copilot runtime for test-os-x64, so it cannot be downloaded on this computer.' } : {}),
     async prepareRuntime(request) {
       calls.prepared += 1;
       if (installed) return prepared;
