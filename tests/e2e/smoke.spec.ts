@@ -227,18 +227,20 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   await expect.poll(background).toBe(DARK_GROUND);
   await attachScreenshot('notes-dark');
   await page.getByRole('link', { name: 'Settings' }).click();
-  const card = page.locator('.MuiCard-root').first();
-  await expect(card).toBeVisible();
-  expect(
-    await card.evaluate((el) => {
-      const style = getComputedStyle(el);
-      return { backgroundColor: style.backgroundColor, borderTopWidth: style.borderTopWidth, boxShadow: style.boxShadow };
-    }),
-  ).toEqual({
-    backgroundColor: 'rgb(23, 26, 35)',
-    borderTopWidth: '1px',
-    boxShadow: 'none',
-  });
+  await expect(page.locator('.MuiCard-root').first()).toBeVisible();
+  // Polled: the hub re-renders as it settles, and a computed style read from a node that has just been
+  // replaced is empty.
+  await expect
+    .poll(() =>
+      page
+        .locator('.MuiCard-root')
+        .first()
+        .evaluate((el) => {
+          const style = getComputedStyle(el);
+          return { backgroundColor: style.backgroundColor, borderTopWidth: style.borderTopWidth, boxShadow: style.boxShadow };
+        }),
+    )
+    .toEqual({ backgroundColor: 'rgb(23, 26, 35)', borderTopWidth: '1px', boxShadow: 'none' });
   await attachScreenshot('settings-dark');
   await page.getByRole('link', { name: 'Notes' }).click();
   // The shell keeps a copy in settings.json, which is what paints the window before the page exists.
