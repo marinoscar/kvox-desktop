@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from '@playwright/test';
+import { expect, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 
 // =============================================================================
 // The shell's left rail in the e2e specs (marinoscar/kvox-desktop#18)
@@ -8,6 +8,19 @@ import { expect, type Locator, type Page } from '@playwright/test';
 // `aria-label`), never by visible text: the collapsed rail shows icons only and the label's case is the
 // shell's business. Windows in these specs are 1280 px wide, so the rail (not the phone bar) is on screen.
 // =============================================================================
+
+/**
+ * Makes the window wide enough for the expanded rail tier (the platform's `lg`, 1200 px), where the collapse
+ * button exists. The app asks for 1280 px, but a runner whose screen is smaller (the Windows CI display) clamps
+ * it, and the medium tier has no collapse control. Resizing is the test's business, not the app's.
+ */
+export async function useWideWindow(app: ElectronApplication, page: Page): Promise<void> {
+  await app.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    window.setContentSize(1400, 900);
+  });
+  await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeGreaterThanOrEqual(1200);
+}
 
 /** The rail (`Main navigation`). */
 export function rail(page: Page): Locator {

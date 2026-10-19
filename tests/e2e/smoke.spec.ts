@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
 import { MOCK_NOTE_TEXT, configureAiProvider, openSettingsCard } from '../support/configure-ai';
-import { expectRail, goTo, rail, railItem, userMenuButton } from '../support/rail';
+import { expectRail, goTo, rail, railItem, useWideWindow, userMenuButton } from '../support/rail';
 import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
 
 // =============================================================================
@@ -50,6 +50,7 @@ async function launch(label: string): Promise<{ app: ElectronApplication; page: 
   await expect(page.getByRole('heading', { name: 'Notes', level: 1 })).toBeVisible({ timeout: 180_000 });
   const ms = Date.now() - started;
   metrics[`${label}LaunchToNotesMs`] = ms;
+  await useWideWindow(app, page);
   return { app, page, ms };
 }
 
