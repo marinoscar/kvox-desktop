@@ -2,17 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
-import Dialog from '@mui/material/Dialog';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogContentText from '@mui/material/DialogContentText';
-import DialogTitle from '@mui/material/DialogTitle';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import LinearProgress from '@mui/material/LinearProgress';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 
 import { useKvoxHost } from '@marinoscar/kvox-web/core/headless';
+import { TypedConfirmDialog } from '@marinoscar/platform-web/user-data/ui';
 
 import type { SecretStorageStatus } from '../../../shared/protocol';
 
@@ -26,10 +22,20 @@ import type { SecretStorageStatus } from '../../../shared/protocol';
 // says so. The secret-storage line warns when Linux has no keyring
 // (`basic_text`) and records the user's explicit consent; without it the
 // server refuses to save a key (marinoscar/kvox#583).
+//
+// Both destructive choices ask through the platform's `TypedConfirmDialog`
+// (marinoscar/kvox-desktop#19): Restore replaces everything in KVox, so the
+// phrase RESTORE must be typed; accepting plaintext key storage weakens how keys
+// rest on disk, so the phrase PLAINTEXT KEYS must be typed. Turning the consent
+// off again needs no confirmation.
 // =============================================================================
 
 type Operation = { kind: 'export' | 'restore'; jobId: string; path: string };
 type Outcome = { severity: 'success' | 'error' | 'info'; text: string };
+/** The phrases the confirmation dialogs ask for. */
+const RESTORE_PHRASE = 'RESTORE';
+const PLAINTEXT_PHRASE = 'PLAINTEXT KEYS';
+
 type JobState = { status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'; error: string | null };
 
 export function DataPrivacyCard() {
@@ -39,6 +45,7 @@ export function DataPrivacyCard() {
   const [operation, setOperation] = useState<Operation | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
+  const [confirmPlaintext, setConfirmPlaintext] = useState(false);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -122,7 +129,12 @@ export function DataPrivacyCard() {
           a keyring (GNOME Keyring, KWallet) is set up, or you accept this below.
           <FormControlLabel
             sx={{ display: 'flex', mt: 1 }}
-            control={<Checkbox checked={storage.plaintextAccepted} onChange={(event) => void acceptPlaintext(event.target.checked)} />}
+            control={
+              <Checkbox
+                checked={storage.plaintextAccepted}
+                onChange={(event) => (event.target.checked ? setConfirmPlaintext(true) : void acceptPlaintext(false))}
+              />
+            }
             label="Store keys without system encryption on this device"
           />
         </Alert>
@@ -133,27 +145,35 @@ export function DataPrivacyCard() {
         </Typography>
       )}
 
-      <Dialog open={confirmRestore !== null} onClose={() => setConfirmRestore(null)}>
-        <DialogTitle>Restore this backup?</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            Everything currently in KVox is replaced by the backup. KVox checks the file first and restarts to restore it.
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setConfirmRestore(null)}>Cancel</Button>
-          <Button
-            color="warning"
-            onClick={() => {
-              const path = confirmRestore;
-              setConfirmRestore(null);
-              if (path) void start('restore', path);
-            }}
-          >
-            Restore
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <TypedConfirmDialog
+        open={confirmRestore !== null}
+        title="Restore this backup?"
+        description="Everything currently in KVox is replaced by the backup. KVox checks the file first and restarts to restore it."
+        phrase={RESTORE_PHRASE}
+        acknowledgement="I understand that everything currently in KVox is replaced."
+        confirmLabel="Restore"
+        phase="idle"
+        onClose={() => setConfirmRestore(null)}
+        onConfirm={() => {
+          const path = confirmRestore;
+          setConfirmRestore(null);
+          if (path) void start('restore', path);
+        }}
+      />
+      <TypedConfirmDialog
+        open={confirmPlaintext}
+        title="Store keys without system encryption?"
+        description="Without a system keyring, saved API keys rest on this device without real encryption. Anyone who can read your user folder could read them."
+        phrase={PLAINTEXT_PHRASE}
+        acknowledgement="I understand my keys will not be encrypted."
+        confirmLabel="Store keys"
+        phase="idle"
+        onClose={() => setConfirmPlaintext(false)}
+        onConfirm={() => {
+          setConfirmPlaintext(false);
+          void acceptPlaintext(true);
+        }}
+      />
     </Stack>
   );
 }

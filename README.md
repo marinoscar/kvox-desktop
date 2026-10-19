@@ -153,15 +153,31 @@ Host duties Desktop carries for the graph:
 - The RDF peers (`n3`, `jsonld`, `rdf-validate-shacl`) and the `graphology` layout peers are installed.
 - The SHACL validation of a graph import runs in a utility process (`src/main/shacl-validate.ts`, wired through `shacl.run`). The RunAsNode fuse is off, so the package's default of spawning the binary as Node cannot work.
 
+## Settings
+
+**Settings** is the platform's registry-driven hub (`SettingsHub` of `@marinoscar/platform-web/settings/ui`), the same component KVox web uses for `/settings`: a grid of cards, or a list below 600 px wide, each opening its own page with a way back. Desktop adds only the registry, `src/renderer/src/settings/sections.tsx` (`DESKTOP_SETTINGS_SECTIONS`), and one route per card, `settings/routes.tsx`.
+
+| Card | Route | Page |
+|---|---|---|
+| AI provider | `/settings/ai` | The provider, model and server URL, then the platform's key card ([AI providers](#ai-providers)) |
+| Connected knowledge | `/settings/knowledge` | The `ai.graphEnabled` switch |
+| Note Templates | `/settings/note-templates` | The notes slice's templates page (it left the top bar for the hub, as on web) |
+| Data and privacy | `/settings/data` | The data folder, Export data and Restore, how saved keys are protected |
+| Updates | `/settings/updates` | The opt-in "Check for updates" |
+
+Restore and "Store keys without system encryption" ask for a typed confirmation (the platform's `TypedConfirmDialog`: tick the box and type `RESTORE`, or `PLAINTEXT KEYS`). A new page is a card in the registry and a route, appended at the end; `tests/unit/settings-hub.test.tsx` fails when one has no counterpart.
+
 ## AI providers
 
 Settings > AI provider. `KVOX_AI` is the packages' own `createKvoxAi` over `createDirectRuntime` (`@marinoscar/kvox-ai`), with the OpenAI adapters of the lean `@marinoscar/platform-ai-providers` (marinoscar/kvox#578) and the key read from `KVOX_SECRETS` on every call (`src/server/ai/`).
 
 | Provider | Setup | Status |
 |---|---|---|
-| OpenAI | Pick the model and paste the API key; it is stored in the OS keychain | Available |
-| OpenAI-compatible | Set the base URL, model and wire style (Chat Completions or Responses), and a key unless the server takes none | Available |
+| OpenAI | Pick the model, paste the API key and **Save & verify**; it is stored in the OS keychain. **Test** and **Re-check** ask OpenAI whether the key works; **Remove** forgets it | Available |
+| OpenAI-compatible | Set the base URL, model and wire style (Chat Completions or Responses), and a key (same card) unless the server takes none (then the page says "No key needed") | Available |
 | GitHub Copilot | A disabled, opt-in slot: decided "go, without Ask" (marinoscar/kvox#581); its models will report no tool calling | Adapter not built yet |
+
+The key block is the platform's `UserAiKeyCard` (`KeylessProviderCard` for a keyless server), the card KVox web shows. **Save & verify** and **Test** run on the local server, never in the window: `POST /api/desktop/ai/keys/:provider/test` calls the adapter's `verifyKey` (and `listModels` for the count) with the typed key, or the stored one when none is typed, and answers a verdict in the platform's `AiProbeResult` shape (HTTP 200; `success` is the answer). The key goes to the provider and nowhere else: not into the answer, an error or a log line. A key the provider rejects is not stored; a host the egress guard refuses (a provider other than the one saved in Settings) is a readable failed check, not a socket error.
 
 The non-secret choices are the system settings namespace `desktopAi` (in the database, so they travel in a backup); keys are `KVOX_SECRETS` purpose `ai`, named after the provider, and never appear in a setting, a response, a log line or an error. Semantic search embeds with OpenAI's `text-embedding-3-small` (the packages' embedding catalog), so it needs an OpenAI key and the OpenAI provider; otherwise search stays full-text.
 
@@ -173,7 +189,7 @@ src/main/        Electron main process: window, kvox:// scheme, window egress gu
                  migration utility processes (node-scripts.ts), opt-in updates (updates.ts, update-policy.ts)
 src/preload/     Preload bridge (kvoxDesktop: connection, data folder, backup dialogs, secret storage, import, updates)
 src/renderer/    React app: KvoxWebHost over loopback, kvox-web notes, graph and Ask screens (routes.tsx),
-                 settings cards (settings/registry.tsx), the Import action and drop target (import/)
+                 the settings hub, its registry and one page per card (settings/), the Import action and drop target (import/)
 src/server/      Utility process: Nest 11 + Fastify 5 on 127.0.0.1, PGlite, server egress guard,
                  the housekeeping timer (housekeeping.ts), the SHACL runner (shacl-runner.ts)
   ports/         One adapter per port (below)
