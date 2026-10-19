@@ -1,8 +1,10 @@
 import { z } from 'zod';
 
+import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
 import type { KvoxSettingsNamespaceDef } from '@marinoscar/kvox-api/ports';
 
 import { isLoopback } from '../egress-guard.js';
+import { COPILOT_CONSENT_VERSION, CopilotSettingsSchema, type CopilotSettings } from './copilot-contract.js';
 
 // =============================================================================
 // The AI provider settings of KVox Desktop (marinoscar/kvox#584)
@@ -18,13 +20,19 @@ import { isLoopback } from '../egress-guard.js';
 //   openai             api.openai.com; the default.
 //   openai-compatible  a server the user names (Ollama, vLLM, LM Studio, a
 //                      gateway): base URL, model, wire style, keyless or not.
-//   copilot            DECIDED, NOT BUILT (marinoscar/kvox#581: "go, without
-//                      Ask"). The slot exists, stays disabled and cannot be
-//                      selected until its adapter ships; when it does, its
-//                      models report toolCalling=false, so Ask stays off on it.
+//   copilot            GitHub Copilot (marinoscar/kvox#581, enabled by
+//                      marinoscar/kvox-desktop#21). NOT a choice of `provider`: an
+//                      opt-in ADD-ON, default off, switched on only after the
+//                      user's consent. While it is on, the tasks it can serve
+//                      (notes, titles, graph extraction, the name check) go to
+//                      Copilot, and the rest (Ask, which needs tool calling, and
+//                      the embeddings) go to the primary provider when it can
+//                      serve them, else they are reported unavailable. Its models
+//                      report toolCalling=false.
 //
-// THE EGRESS RULE: the server may reach exactly the active provider's host
-// ({@link allowedHostsFor}), besides loopback, which is always allowed.
+// THE EGRESS RULE: the server may reach exactly the active provider's host and,
+// only while Copilot is on, the Copilot hosts ({@link allowedHostsFor}), besides
+// loopback, which is always allowed.
 // =============================================================================
 
 /** The KVOX_SETTINGS system namespace. */
@@ -37,7 +45,7 @@ export const AI_KEY_PURPOSE = 'ai';
 export const DESKTOP_AI_PROVIDER_IDS = ['openai', 'openai-compatible', 'copilot'] as const;
 export type DesktopAiProviderId = (typeof DESKTOP_AI_PROVIDER_IDS)[number];
 
-/** The slots that have an adapter today and may be selected. */
+/** The slots that may be the PRIMARY provider (Copilot is an add-on, never the primary). */
 export const SELECTABLE_AI_PROVIDER_IDS = ['openai', 'openai-compatible'] as const;
 export type SelectableAiProviderId = (typeof SELECTABLE_AI_PROVIDER_IDS)[number];
 
@@ -65,9 +73,9 @@ export const DESKTOP_AI_PROVIDERS: readonly DesktopAiProviderSlot[] = [
   {
     id: 'copilot',
     label: 'GitHub Copilot',
-    implemented: false,
+    implemented: true,
     toolCalling: false,
-    note: 'Coming later (opt-in). Note generation only: Ask is not available with Copilot.',
+    note: 'Opt-in add-on. Notes, knowledge extraction and the name check run on your GitHub Copilot subscription; Ask needs an OpenAI key.',
   },
 ];
 
@@ -99,6 +107,9 @@ const baseUrl = z
   }, 'The base URL must be an http(s) URL with no credentials, query or fragment')
   .transform((value) => value.replace(/\/+$/, ''));
 
+/** Copilot off, no consent, no model chosen. */
+export const DEFAULT_COPILOT_SETTINGS: CopilotSettings = { enabled: false, consentedAt: null, consentVersion: null, model: null };
+
 export const desktopAiSettingsSchema = z.object({
   /** The active provider, or `null` for AI off. */
   provider: z.enum(SELECTABLE_AI_PROVIDER_IDS).nullable(),
@@ -110,8 +121,11 @@ export const desktopAiSettingsSchema = z.object({
     /** False for a server that takes no key (a local Ollama). */
     requiresKey: z.boolean(),
   }),
-  /** The disabled Copilot slot: it cannot be switched on until its adapter exists (marinoscar/kvox#581). */
-  copilot: z.object({ enabled: z.literal(false) }),
+  /**
+   * The Copilot add-on (marinoscar/kvox#631's schema). A stored `{ enabled: false }` from before
+   * the adapter existed parses to the defaults: off, no consent. Nothing here ever turns it on.
+   */
+  copilot: CopilotSettingsSchema.default(() => ({ ...DEFAULT_COPILOT_SETTINGS })),
 });
 
 export type DesktopAiSettings = z.infer<typeof desktopAiSettingsSchema>;
@@ -120,7 +134,7 @@ export const DEFAULT_DESKTOP_AI_SETTINGS: DesktopAiSettings = {
   provider: 'openai',
   openai: { model: DEFAULT_OPENAI_MODEL },
   openaiCompatible: { baseUrl: null, model: null, apiStyle: 'chat_completions', requiresKey: true },
-  copilot: { enabled: false },
+  copilot: { ...DEFAULT_COPILOT_SETTINGS },
 };
 
 /** The namespace as KVOX_SETTINGS registers it. */
@@ -144,15 +158,30 @@ export function needsKey(provider: SelectableAiProviderId, settings: DesktopAiSe
 }
 
 /**
+ * Whether the Copilot add-on is on: the user switched it on AND consented to the
+ * CURRENT consent text. A stored `enabled: true` with an older consent version is
+ * off until the user consents again.
+ */
+export function copilotActive(settings: DesktopAiSettings): boolean {
+  const { enabled, consentedAt, consentVersion } = settings.copilot;
+  return enabled && consentedAt !== null && consentVersion === COPILOT_CONSENT_VERSION;
+}
+
+/**
  * The hosts the server may reach under these settings: the active provider's
- * host, nothing else. A server on this device needs no entry (loopback is always
- * allowed), so it answers an empty list.
+ * host, plus the Copilot hosts while (and only while) Copilot is on. A server on
+ * this device needs no entry (loopback is always allowed), so it answers an empty
+ * list.
  */
 export function allowedHostsFor(settings: DesktopAiSettings): string[] {
-  if (settings.provider === 'openai') return [OPENAI_HOST];
-  if (settings.provider === 'openai-compatible' && settings.openaiCompatible.baseUrl) {
+  const hosts: string[] = [];
+  if (settings.provider === 'openai') hosts.push(OPENAI_HOST);
+  else if (settings.provider === 'openai-compatible' && settings.openaiCompatible.baseUrl) {
     const host = new URL(settings.openaiCompatible.baseUrl).hostname;
-    return isLoopback(host) ? [] : [host];
+    if (!isLoopback(host)) hosts.push(host);
   }
-  return [];
+  if (copilotActive(settings)) {
+    for (const host of COPILOT_EGRESS_HOSTS) if (!hosts.includes(host)) hosts.push(host);
+  }
+  return hosts;
 }
