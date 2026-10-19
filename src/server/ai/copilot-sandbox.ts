@@ -69,16 +69,14 @@ const STRIPPED_ENV = [
 
 /**
  * The hosts the one-time runtime DOWNLOAD may reach (`prepareCopilotRuntime({ download: { allowedHosts } })`;
- * the same list lets the server's in-process egress guard through for the download only): GitHub's release
- * hosts. A release asset is a redirect from github.com to GitHub's object storage; every hop is checked
- * against this list by `prepareCopilotRuntime`. Not part of {@link COPILOT_EGRESS_HOSTS}: the runtime
- * itself never needs them once installed.
+ * the same list lets the server's in-process egress guard through for the download only). The runtime is
+ * the npm package `@github/copilot-sdk-<platform>` (marinoscar/kvox-desktop#32), and the registry serves
+ * its tarball itself (HTTP 200 from `registry.npmjs.org`, no redirect to a CDN host; verified by the pin
+ * script, which refuses a tarball URL on any other host). Every hop is checked against this list by
+ * `prepareCopilotRuntime`. Not part of {@link COPILOT_EGRESS_HOSTS}: the runtime itself never needs it
+ * once installed.
  */
-export const COPILOT_RUNTIME_DOWNLOAD_HOSTS: readonly string[] = Object.freeze([
-  'github.com',
-  'objects.githubusercontent.com',
-  'release-assets.githubusercontent.com',
-]);
+export const COPILOT_RUNTIME_DOWNLOAD_HOSTS: readonly string[] = Object.freeze(['registry.npmjs.org']);
 
 /** Options of {@link startCopilotRuntimeSandbox}. */
 export interface CopilotSandboxOptions {
