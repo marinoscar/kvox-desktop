@@ -125,7 +125,8 @@ describe('extractCopilotRuntimeTgz', () => {
       }
     });
 
-    it('does not write through a symbolic link that already exists in the destination', async () => {
+    // Creating a symlink needs a privilege a Windows runner may not have; the rule is the same code path on every OS.
+    it.skipIf(process.platform === 'win32')('does not write through a symbolic link that already exists in the destination', async () => {
       const s = await extract([...OK, { name: 'package/planted/escape.txt', body: 'x' }]);
       const outside = join(s.root, 'outside');
       mkdirSync(outside);
