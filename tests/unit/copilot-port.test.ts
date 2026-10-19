@@ -83,28 +83,21 @@ describe('createCopilotPort', () => {
     await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
   });
 
-  it('downloads: starts, follows the status until the runtime is ready, then resolves', async () => {
-    const states = [status('downloading', { runtime: { state: 'downloading', version: null, progress: 0.2 } }), status('downloading'), status('ready')];
-    const { host, calls } = fakeHost((call) => (call.method === 'POST' ? states[0] : (states.splice(1, 1)[0] ?? status('ready'))));
-    await createCopilotPort(host, { downloadPollMs: 1 }).downloadRuntime(new AbortController().signal);
-    expect(calls[0]).toMatchObject({ method: 'POST', path: '/desktop/ai/copilot/runtime/download' });
-    expect(calls.slice(1).every((call) => call.method === 'GET' && call.path === '/desktop/ai/copilot/status')).toBe(true);
-    expect(calls.length).toBeGreaterThan(1);
-  });
-
-  it('rejects a download that ends in error', async () => {
-    const { host } = fakeHost(() => status('error'));
-    await expect(createCopilotPort(host, { downloadPollMs: 1 }).downloadRuntime(new AbortController().signal)).rejects.toThrow(/could not be downloaded/);
-  });
-
-  it('cancels the download on the server when aborted, and rejects', async () => {
+  it('starts the download and returns: the card follows the status, and DELETE cancels', async () => {
     const { host, calls } = fakeHost(() => status('downloading'));
-    const controller = new AbortController();
-    const download = createCopilotPort(host, { downloadPollMs: 5 }).downloadRuntime(controller.signal);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    controller.abort();
-    await expect(download).rejects.toMatchObject({ name: 'AbortError' });
-    expect(calls.at(-1)).toMatchObject({ method: 'DELETE', path: '/desktop/ai/copilot/runtime/download' });
+    const port = createCopilotPort(host);
+    await port.downloadRuntime(new AbortController().signal);
+    await port.cancelRuntimeDownload();
+    expect(calls.map((call) => `${call.method} ${call.path}`)).toEqual([
+      'POST /desktop/ai/copilot/runtime/download',
+      'DELETE /desktop/ai/copilot/runtime/download',
+    ]);
+  });
+
+  it('passes a refused download (409 runtime_download_unavailable) to the card', async () => {
+    const refusal = Object.assign(new Error('No download is configured.'), { code: 'runtime_download_unavailable', status: 409 });
+    const host = { http: { request: vi.fn().mockRejectedValue(refusal) } } as unknown as KvoxWebHost;
+    await expect(createCopilotPort(host).downloadRuntime(new AbortController().signal)).rejects.toBe(refusal);
   });
 });
 

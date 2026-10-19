@@ -18,8 +18,9 @@ import type { KvoxWebHost } from '@marinoscar/kvox-web/core/headless';
 //   startSignIn    POST   /desktop/ai/copilot/sign-in
 //   waitForSignIn  POST   /desktop/ai/copilot/sign-in/wait  (long poll; the abort hangs up)
 //   signOut        POST   /desktop/ai/copilot/sign-out
-//   downloadRuntime POST  /desktop/ai/copilot/runtime/download (202), then the status
-//                  until the runtime stops downloading; the abort is DELETE
+//   downloadRuntime POST  /desktop/ai/copilot/runtime/download (202): it STARTS the download
+//                  and resolves; progress is the status (`runtime.state` 'downloading'), which
+//                  the hook then polls, and DELETE (`cancelRuntimeDownload`) cancels it
 // =============================================================================
 
 const BASE = '/desktop/ai/copilot';
@@ -37,37 +38,14 @@ interface SettingsView {
   settings: { copilot: CopilotSettings };
 }
 
-export interface CopilotPortOptions {
-  /** How often the status is read while the runtime downloads. Default 500 ms. */
-  downloadPollMs?: number;
-}
-
-function abortError(): Error {
-  return Object.assign(new Error('Aborted'), { name: 'AbortError' });
-}
-
-/** Waits `ms`, rejecting when `signal` aborts. */
-function pause(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(abortError());
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(abortError());
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
+/** The port, plus the cancel of a started download. */
+export interface DesktopCopilotPort extends CopilotProviderPort {
+  /** DELETE /desktop/ai/copilot/runtime/download. */
+  cancelRuntimeDownload(): Promise<void>;
 }
 
 /** The port over `host`; create it once per host (the hook wants a stable port). */
-export function createCopilotPort(host: KvoxWebHost, options: CopilotPortOptions = {}): CopilotProviderPort {
-  const { downloadPollMs = 500 } = options;
+export function createCopilotPort(host: KvoxWebHost): DesktopCopilotPort {
   const getStatus = (): Promise<DesktopCopilotStatus> => host.http.request<DesktopCopilotStatus>('GET', `${BASE}/status`);
   const getSettings = async (): Promise<CopilotSettings> => (await host.http.request<SettingsView>('GET', '/desktop/ai/settings')).settings.copilot;
 
@@ -86,20 +64,11 @@ export function createCopilotPort(host: KvoxWebHost, options: CopilotPortOptions
       await host.http.request<DesktopCopilotStatus>('POST', `${BASE}/sign-out`);
     },
     async downloadRuntime(signal) {
-      let status = await host.http.request<DesktopCopilotStatus>('POST', `${BASE}/runtime/download`, { signal });
-      try {
-        while (status.runtime.state === 'downloading') {
-          await pause(downloadPollMs, signal);
-          status = await getStatus();
-        }
-      } catch (error) {
-        if (signal.aborted) {
-          // Cancel on the server too; the hook ignores the rejection of an aborted download.
-          await host.http.request<DesktopCopilotStatus>('DELETE', `${BASE}/runtime/download`).catch(() => undefined);
-        }
-        throw error;
-      }
-      if (status.runtime.state === 'error') throw new Error('The Copilot runtime could not be downloaded.');
+      // 202: the server downloads on; the card follows the status and offers Cancel meanwhile.
+      await host.http.request<DesktopCopilotStatus>('POST', `${BASE}/runtime/download`, { signal });
+    },
+    async cancelRuntimeDownload() {
+      await host.http.request<DesktopCopilotStatus>('DELETE', `${BASE}/runtime/download`);
     },
   };
 }

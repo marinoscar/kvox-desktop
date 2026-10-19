@@ -42,7 +42,13 @@ export function CopilotSection({ onStatus }: { onStatus?: (status: CopilotStatus
       onWaitForSignIn={copilot.waitForSignIn}
       onSignOut={copilot.signOut}
       onDownloadRuntime={copilot.downloadRuntime}
-      onCancelRuntimeDownload={copilot.cancelRuntimeDownload}
+      onCancelRuntimeDownload={() => {
+        copilot.cancelRuntimeDownload();
+        port
+          .cancelRuntimeDownload()
+          .then(() => copilot.refresh())
+          .catch(() => undefined);
+      }}
       onOpenExternal={(url) => {
         void window.kvoxDesktop.openExternal(url);
       }}

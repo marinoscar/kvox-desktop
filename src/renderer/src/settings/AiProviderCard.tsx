@@ -19,6 +19,7 @@ import type { AiProbeResult, UserAiKey } from '@marinoscar/platform-web/ai/headl
 import { KeylessProviderCard, UserAiKeyCard } from '@marinoscar/platform-web/ai/ui';
 
 import { CopilotSection } from './CopilotSection';
+import { allowedHostsOf } from './copilotPort';
 
 // =============================================================================
 // "AI provider": which provider runs the AI calls, its model and its key
@@ -80,6 +81,8 @@ export function AiProviderCard() {
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [copilotStatus, setCopilotStatus] = useState<CopilotStatus | null>(null);
+  // Saving the provider changes the hosts the server allows: the Copilot card reads its status again.
+  const [copilotReads, setCopilotReads] = useState(0);
 
   const load = useCallback(async () => {
     const next = await host.http.request<SettingsView>('GET', '/desktop/ai/settings');
@@ -112,12 +115,15 @@ export function AiProviderCard() {
   const keyNeeded = active === 'openai' || (active === 'openai-compatible' && compatible.requiresKey);
   const savedKey = slot?.key ?? null;
   const saved = active !== null && view.settings.provider === active;
+  // The server's answer to the Copilot status is the freshest list (switching Copilot on or off changes it).
+  const hosts = copilotStatus ? allowedHostsOf(copilotStatus) : view.allowedHosts;
 
   const saveSettings = () =>
     run(async () => {
       const next = await host.http.request<SettingsView>('PATCH', '/desktop/ai/settings', { body: draft });
       setView(next);
       setDraft(next.settings);
+      setCopilotReads((reads) => reads + 1);
     }, 'AI settings saved.');
 
   // ---- The key card's bindings: the server holds the key; nothing comes back but a status ----
@@ -263,13 +269,13 @@ export function AiProviderCard() {
       )}
 
       {/* The add-on: its own card, consent and sign-in. Its status keeps the footer below true. */}
-      <CopilotSection onStatus={setCopilotStatus} />
+      <CopilotSection key={copilotReads} onStatus={setCopilotStatus} />
 
       {/* With Copilot on, the card's own footer lists every allowed host, so this one steps aside. */}
       {copilotStatus?.enabled !== true && (
         <Typography variant="body2" color="text.secondary">
-          {view.allowedHosts.length > 0
-            ? `Besides this device, KVox may connect only to: ${view.allowedHosts.join(', ')}.`
+          {hosts.length > 0
+            ? `Besides this device, KVox may connect only to: ${hosts.join(', ')}.`
             : 'KVox connects to nothing outside this device.'}
         </Typography>
       )}
