@@ -6,6 +6,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 
 import type { KvoxDesktopBridge } from '../../src/shared/protocol';
 import { MOCK_NOTE_TEXT, configureAiProvider, openSettingsCard } from '../support/configure-ai';
+import { goTo, railItem } from '../support/rail';
 import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
 
 // =============================================================================
@@ -74,7 +75,7 @@ async function openSettings(page: Page) {
 
 async function expectKnowledgeLinks(page: Page, visible: boolean) {
   for (const name of ['Knowledge', 'Review', 'Ask']) {
-    const link = page.getByRole('link', { name, exact: true });
+    const link = railItem(page, name as 'Knowledge' | 'Review' | 'Ask');
     if (visible) await expect(link).toBeVisible();
     else await expect(link).toHaveCount(0);
   }
@@ -116,7 +117,7 @@ test('connected knowledge can be switched off and on in Settings, and stays as s
   await toggle.click();
   await expect(toggle).toBeChecked();
   await expectKnowledgeLinks(page, true);
-  await page.getByRole('link', { name: 'Ask', exact: true }).click();
+  await goTo(page, 'Ask');
   await expect(page.getByPlaceholder('Ask about your meetings, people and projects…')).toBeVisible();
   expect((await askOnce(page)).body).not.toContain('graph_disabled');
 });

@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
 import { MOCK_NOTE_TEXT, configureAiProvider, openSettingsCard } from '../support/configure-ai';
+import { expectRail, goTo, rail, railItem, userMenuButton } from '../support/rail';
 import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
 
 // =============================================================================
@@ -129,10 +130,8 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   const LIGHT_GROUND = 'rgb(246, 247, 251)';
   const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   const windowBackground = () => first.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBackgroundColor().toLowerCase());
-  const chooseTheme = async (label: 'Light' | 'Dark' | 'System') => {
-    await page.getByRole('button', { name: /^Theme:/ }).click();
-    await page.getByRole('menuitem', { name: label }).click();
-  };
+  // The shell's own toggle (marinoscar/kvox-desktop#18): light <-> dark.
+  const toggleTheme = () => page.getByRole('button', { name: 'toggle theme' }).click();
   const attachScreenshot = async (name: string) =>
     test.info().attach(name, { body: await page.screenshot(), contentType: 'image/png' });
 
@@ -165,29 +164,56 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   await expect.poll(background).toBe(LIGHT_GROUND);
   await expect.poll(windowBackground).toBe('#f6f7fb');
 
-  // The app bar's temporary button: explicit modes, then back to the OS.
-  await chooseTheme('Dark');
+  // The app bar's toggle (the shell's): light -> dark -> light.
+  await toggleTheme();
   await expect.poll(background).toBe(DARK_GROUND);
-  await chooseTheme('System');
+  await toggleTheme();
   await expect.poll(background).toBe(LIGHT_GROUND);
+
+  // ---- The shell (marinoscar/kvox-desktop#18) ---------------------------------------
+  // KvoxAppShell, as on KVox web: a left rail of icons and labels (Notes, Knowledge, Review, Ask; Settings
+  // pinned at the foot, no Templates: it is a Settings card), the KVox name in the app bar, and a user menu
+  // with the two desktop rows and no sign-out. Rail items are found by role and name.
+  await expectRail(page, ['Notes', 'Knowledge', 'Review', 'Ask', 'Settings']);
+  await expect(railItem(page, 'Notes')).toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('header').getByText('KVox', { exact: true })).toBeVisible();
+  for (const [name, path] of [
+    ['Knowledge', /#\/graph$/],
+    ['Review', /#\/graph\/review$/],
+    ['Ask', /#\/ask$/],
+    ['Settings', /#\/settings$/],
+    ['Notes', /#\/notes$/],
+  ] as const) {
+    await goTo(page, name);
+    await page.waitForURL(path);
+    await expect(railItem(page, name)).toHaveAttribute('aria-current', 'page');
+  }
+  await userMenuButton(page).click();
+  const userMenu = page.getByRole('menu');
+  await expect(userMenu.getByRole('menuitem', { name: 'Open data folder' })).toBeVisible();
+  await expect(userMenu.getByRole('menuitem', { name: 'About KVox' })).toBeVisible();
+  await expect(userMenu.getByRole('menuitem', { name: /log ?out|sign ?out/i })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(userMenu).toHaveCount(0);
+  await attachScreenshot('shell-rail');
   await clickMenuItem('New note');
   await page.waitForURL(/#\/notes\/new$/);
   await expect(page.getByRole('heading', { name: 'New note' })).toBeVisible();
   await clickMenuItem('Settings');
   await page.waitForURL(/#\/settings$/);
-  await page.getByRole('link', { name: 'Notes' }).click();
+  await goTo(page, 'Notes');
 
   // ---- Settings: the hub of five cards, then the provider, its model, its key ----
-  await page.getByRole('link', { name: 'Settings' }).click();
+  await goTo(page, 'Settings');
   await expect(page.getByRole('heading', { name: 'Settings', level: 4 })).toBeVisible();
   for (const title of ['AI provider', 'Connected knowledge', 'Note Templates', 'Data and privacy', 'Updates']) {
     await expect(page.getByRole('button', { name: new RegExp(`^${title}`) })).toBeVisible();
   }
   // Templates is a card of the hub, not a top-bar entry.
-  await expect(page.getByRole('link', { name: 'Templates' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Templates', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: /^Note Templates/ }).click();
   await expect(page.getByRole('heading', { name: 'Note Templates', level: 1 })).toBeVisible();
-  await page.getByRole('link', { name: 'Settings' }).first().click();
+  await goTo(page, 'Settings');
   await page.getByRole('button', { name: /^AI provider/ }).click();
   await expect(page.getByRole('heading', { name: 'AI provider', level: 1 })).toBeVisible();
   await expect(page.getByText('KVox may connect only to: api.openai.com')).toBeVisible();
@@ -204,7 +230,7 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   await expect(keyCard.getByText('The key works')).toBeVisible();
   await expect(keyCard.getByText('1 model available with this key')).toBeVisible();
   expect(await keyCard.innerText()).not.toContain(PLANTED_KEY);
-  await page.getByRole('link', { name: 'Notes' }).click();
+  await goTo(page, 'Notes');
 
   await page.getByRole('button', { name: 'New note' }).filter({ visible: true }).first().click();
   await expect(page.getByRole('heading', { name: 'New note' })).toBeVisible();
@@ -222,11 +248,11 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   await expect(page.getByText('Desktop smoke marker: zebracorn.')).toBeVisible();
   await expect(page.getByRole('heading', { level: 1 }).first()).not.toHaveText('');
   // ---- Dark: the card, and the choice that has to survive the restart -----------------
-  await page.getByRole('link', { name: 'Notes' }).click();
-  await chooseTheme('Dark');
+  await goTo(page, 'Notes');
+  await toggleTheme();
   await expect.poll(background).toBe(DARK_GROUND);
   await attachScreenshot('notes-dark');
-  await page.getByRole('link', { name: 'Settings' }).click();
+  await goTo(page, 'Settings');
   await expect(page.locator('.MuiCard-root').first()).toBeVisible();
   // Polled: the hub re-renders as it settles, and a computed style read from a node that has just been
   // replaced is empty.
@@ -242,7 +268,13 @@ test('a note generated from a Markdown file survives a restart, with no egress',
     )
     .toEqual({ backgroundColor: 'rgb(23, 26, 35)', borderTopWidth: '1px', boxShadow: 'none' });
   await attachScreenshot('settings-dark');
-  await page.getByRole('link', { name: 'Notes' }).click();
+  await goTo(page, 'Notes');
+  // The rail collapses and the choice is kept in the shell settings (shell.railCollapsed), to be there on the next launch.
+  await rail(page).getByRole('button', { name: 'Collapse navigation' }).click();
+  await expect(rail(page).getByRole('button', { name: 'Expand navigation' })).toBeVisible();
+  await expect
+    .poll(() => (JSON.parse(readFileSync(join(userDataDir, 'settings.json'), 'utf8')) as { shell?: { railCollapsed?: boolean } }).shell?.railCollapsed)
+    .toBe(true);
   // The shell keeps a copy in settings.json, which is what paints the window before the page exists.
   await expect
     .poll(() => (JSON.parse(readFileSync(join(userDataDir, 'settings.json'), 'utf8')) as { themeMode?: string }).themeMode)
@@ -257,6 +289,14 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   expect(await second.page.evaluate(() => localStorage.getItem('theme_mode'))).toBe('dark');
   expect(await second.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBackgroundColor().toLowerCase())).toBe('#0f1117');
   test.info().attach('notes-dark-after-restart', { body: await second.page.screenshot(), contentType: 'image/png' });
+  // The rail is still collapsed (the destinations stay reachable, by name), and expands again.
+  await expect(rail(second.page).getByRole('button', { name: 'Expand navigation' })).toBeVisible();
+  await expect(railItem(second.page, 'Settings')).toBeVisible();
+  await rail(second.page).getByRole('button', { name: 'Expand navigation' }).click();
+  await expect(rail(second.page).getByRole('button', { name: 'Collapse navigation' })).toBeVisible();
+  await expect
+    .poll(() => (JSON.parse(readFileSync(join(userDataDir, 'settings.json'), 'utf8')) as { shell?: { railCollapsed?: boolean } }).shell?.railCollapsed)
+    .toBe(false);
   // The library lists the note with its generated body; opening it shows the note. (Not by the title read in
   // the first run: the heading shows the template's name until the generated title replaces it.)
   await second.page.getByRole('button').filter({ hasText: 'Desktop smoke marker: zebracorn.' }).first().click();
