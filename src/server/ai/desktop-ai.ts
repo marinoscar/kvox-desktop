@@ -228,7 +228,7 @@ export class DesktopAi {
     });
   }
 
-  /** The egress allowlist under these settings (and GitHub's release hosts while the runtime downloads). */
+  /** The egress allowlist under these settings (and the npm registry host while the runtime downloads). */
   private hostsFor(settings: DesktopAiSettings): string[] {
     return allowedHostsFor(settings, { runtimeDownload: this.copilot.downloading });
   }
@@ -587,7 +587,7 @@ export class DesktopAi {
 
   async copilotStartDownload(): Promise<CopilotStatus> {
     await this.requireCopilotActive();
-    // The release hosts are allowed BEFORE the first byte is asked for, and dropped when it ends.
+    // The registry host is allowed BEFORE the first byte is asked for, and dropped when it ends.
     this.options.onAllowedHosts(allowedHostsFor(await this.read(), { runtimeDownload: true }));
     try {
       this.copilot.startDownload();

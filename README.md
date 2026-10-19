@@ -98,7 +98,7 @@ Every blocked request is an error line in the log with the host only (`window: e
 
 GitHub Copilot is opt-in and off by default. While it is off there is no runtime process, no proxy listener and no Copilot traffic, and nothing is downloaded. What turning it on adds (marinoscar/kvox-desktop#23):
 
-- **A download, once.** The Copilot SDK drives a separate runtime of 130 to 175 MB per platform. The installer does not contain it: the first opt-in downloads it from GitHub's release hosts only (`github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, every redirect hop checked), refuses it unless its SHA-256 matches, and keeps it in `copilot/runtime/<version>`. An optional installer flavour bundles it instead (see [Packaging](#the-copilot-runtime)).
+- **A download, once.** The Copilot SDK drives a separate runtime of 130 to 175 MB per platform. The installer does not contain it: the first opt-in downloads it from the npm registry only (`registry.npmjs.org`, https, the default port, every redirect hop checked and none needed today), refuses it unless its SHA-256 matches the pin in this repository, and keeps it in `copilot/runtime/<version>`. The host is reachable for the download only and is dropped again when it ends. An optional installer flavour bundles the runtime instead (see [The Copilot runtime](#the-copilot-runtime)).
 - **A child process that cannot reach the internet by itself.** The runtime is a separate process, so the guard above cannot see its sockets. It is started with `HTTPS_PROXY` and `HTTP_PROXY` pointing at a proxy that KVox runs on `127.0.0.1` (a random port, protected by random credentials so no other program can use it) and an empty `NO_PROXY`. The proxy opens HTTPS tunnels to these hosts and refuses everything else (plain HTTP, other ports, IP addresses, sub-domains), logging each refusal with the host only. The server's own guard applies a second time to the tunnel:
 
   | Host | For |
@@ -368,7 +368,26 @@ Turning it off stops the timer and closes the session again. No user data is sen
 
 The GitHub Copilot runtime (130 to 175 MB per platform) is **not** in the default installer: it is downloaded on the first opt-in (see [Network and privacy: GitHub Copilot](#network-and-privacy-github-copilot)). `electron-builder.yml` excludes the SDK's per-platform runtime packages (`!node_modules/@github/copilot-sdk-*/**`; the SDK's own JavaScript stays, it is small). `node scripts/packaged-app.mjs verify` fails the build if the runtime is beside the archive or inside `app.asar`, or if any file outside the archive is over 100 MB; `tests/unit/packaging.test.ts` pins the same rules.
 
-An optional **with-copilot** flavour ships the runtime instead, for installs that cannot reach GitHub's release hosts. It is off by default and not built in CI:
+#### Where the downloaded runtime comes from
+
+The runtime is the optional npm package `@github/copilot-sdk-<platform>` of the `@github/copilot-sdk` this repository pins (1.0.22, Copilot runtime 1.0.98). GitHub publishes no checksum for it, so **we** pin one: `src/server/ai/copilot-runtime-sources.ts` (generated, do not edit) holds, per platform, the registry tarball URL (`https://registry.npmjs.org/@github/copilot-sdk-<platform>/-/copilot-sdk-<platform>-1.0.22.tgz`), its SHA-256 computed from the downloaded bytes, its size (the download is capped at it) and the launcher inside it. Platforms: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `linuxmusl-arm64`, `linuxmusl-x64`, `win32-arm64`, `win32-x64` (all eight the SDK lists). On any other platform the download action answers 409 `runtime_download_unavailable` with the platform named.
+
+The flow, with the Copilot mechanics all in `@marinoscar/kvox-ai/copilot` (`prepareCopilotRuntime`): the host passes the pinned `url` and `sha256`, the allowed host and `src/server/ai/copilot-runtime-extract.ts`; the package downloads (progress and cancel), compares the SHA-256 and only then calls the extractor, then installs atomically. The extractor is a small strict `.tgz` reader: regular files and directories only (a symbolic link, hard link or device is refused, so nothing can point out of the folder), no absolute, drive-letter, backslash or `..` path, every path re-checked to stay inside the destination, no overwrite, entry, size and count limits, header checksums verified, setuid dropped, launcher made executable (0755) on macOS and Linux. The whole package is unpacked (the launcher needs `runtime.node` beside it and the package's `builtin/` folders). A checksum mismatch or a refused archive leaves nothing installed.
+
+**Re-pinning** after bumping `@github/copilot-sdk` in `package.json`:
+
+```bash
+npx npm@11 install                            # npm 10 cannot resolve the kvox-web peer set
+node scripts/pin-copilot-runtime.mjs          # downloads the eight tarballs (~500 MB), hashes them, rewrites the table
+node scripts/pin-copilot-runtime.mjs --check  # exit 1 when the committed table is stale (downloads again)
+npx vitest run tests/unit/copilot-runtime-sources.test.ts
+```
+
+The script reads the SDK's `optionalDependencies` from the registry, cross-checks each tarball against the registry's own sha512 `dist.integrity`, confirms the launcher and `runtime.node` are in it, and refuses a tarball URL on any host but `registry.npmjs.org` (adding a host to `COPILOT_RUNTIME_DOWNLOAD_HOSTS` is a deliberate change). `tests/unit/copilot-runtime-sources.test.ts` fails when the table does not match the pinned SDK version or lacks a platform the SDK ships. Review the diff of the table like a dependency bump.
+
+#### The bundled flavour
+
+An optional **with-copilot** flavour ships the runtime instead, for installs that cannot reach the npm registry. It is off by default and not built in CI:
 
 1. Stage the runtime of every platform and architecture you build in `build/copilot-runtime/<os>-<arch>/` (`<os>` is `win`, `mac` or `linux`; `<arch>` is `x64` or `arm64`): the `copilot-runtime` launcher (`copilot-runtime.exe` on Windows) and its sibling `runtime.node`, both from the platform's `@github/copilot-sdk-<platform>` package under `prebuilds/`.
 2. `node scripts/dist.mjs --config electron-builder.with-copilot.yml`. It extends the default config and adds one `extraResources` entry, which lands in `resources/copilot/`, outside the archive (a file inside an asar archive cannot be executed). The installers go to `release-with-copilot/`.
