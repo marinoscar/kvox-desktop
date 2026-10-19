@@ -15,7 +15,7 @@ import {
   type ProviderChoice,
 } from '@marinoscar/kvox-ai';
 import type { KvoxAiPort, KvoxSecretStatus, KvoxSecretsPort, KvoxSettingsPort } from '@marinoscar/kvox-api/ports';
-import { AI_KEYLESS_API_KEY, type AiCallContext, type AiProviderAdapter } from '@marinoscar/platform-ai-providers';
+import { AI_KEYLESS_API_KEY, AiError, type AiCallContext, type AiProviderAdapter } from '@marinoscar/platform-ai-providers';
 import { createOpenAiAdapter, createOpenAiCompatibleAdapter } from '@marinoscar/platform-ai-providers/openai';
 
 import { isLoopback } from '../egress-guard.js';
@@ -166,7 +166,7 @@ function missingRuntimeHost(): CopilotHost {
     dataDirectory: '',
     canDownload: false,
     prepareRuntime: async () => {
-      throw Object.assign(new Error('No GitHub Copilot runtime is available.'), { details: { check: 'runtime_missing' } });
+      throw new AiError('AI_PROVIDER_UNAVAILABLE', 'No GitHub Copilot runtime is available.', { details: { check: 'runtime_missing' } });
     },
     createTransport: async () => {
       throw new Error('No GitHub Copilot runtime is available.');
@@ -194,7 +194,12 @@ export class DesktopAi {
 
   constructor(private readonly options: DesktopAiOptions) {
     options.secrets.registerPurpose(AI_KEY_PURPOSE, 'AI provider API keys');
-    this.copilot = new CopilotService({ host: options.copilot ?? missingRuntimeHost(), log: options.log ?? (() => undefined) });
+    this.copilot = new CopilotService({
+      host: options.copilot ?? missingRuntimeHost(),
+      log: options.log ?? (() => undefined),
+      // The download hosts leave the egress allowlist when the download ends, however it ends.
+      onDownloadSettled: () => void this.read().then((settings) => this.options.onAllowedHosts(this.hostsFor(settings))),
+    });
     // `createDirectRuntime` reads this record on every call. The Copilot entry is a getter on the
     // service, so the adapter appears when it is built (also after a later runtime download)
     // and disappears when Copilot is switched off.
@@ -223,6 +228,11 @@ export class DesktopAi {
     });
   }
 
+  /** The egress allowlist under these settings (and GitHub's release hosts while the runtime downloads). */
+  private hostsFor(settings: DesktopAiSettings): string[] {
+    return allowedHostsFor(settings, { runtimeDownload: this.copilot.downloading });
+  }
+
   /** Brings Copilot up when the stored settings have it on (server start). */
   async start(): Promise<void> {
     await this.applyCopilot(await this.read());
@@ -240,7 +250,7 @@ export class DesktopAi {
 
   /** Reads the settings and hands their allowlist to the egress guard (start-up). */
   async applyEgress(): Promise<string[]> {
-    const hosts = allowedHostsFor(await this.read());
+    const hosts = this.hostsFor(await this.read());
     this.options.onAllowedHosts(hosts);
     return hosts;
   }
@@ -262,7 +272,7 @@ export class DesktopAi {
       }
       throw error;
     }
-    this.options.onAllowedHosts(allowedHostsFor(saved));
+    this.options.onAllowedHosts(this.hostsFor(saved));
     await this.applyCopilot(saved);
     return saved;
   }
@@ -577,8 +587,21 @@ export class DesktopAi {
 
   async copilotStartDownload(): Promise<CopilotStatus> {
     await this.requireCopilotActive();
-    this.copilot.startDownload();
+    // The release hosts are allowed BEFORE the first byte is asked for, and dropped when it ends.
+    this.options.onAllowedHosts(allowedHostsFor(await this.read(), { runtimeDownload: true }));
+    try {
+      this.copilot.startDownload();
+    } catch (error) {
+      this.options.onAllowedHosts(this.hostsFor(await this.read()));
+      throw error;
+    }
     return this.copilotStatus();
+  }
+
+  /** "Remove Copilot data" (only with Copilot off): the private directory, and the downloaded runtime if asked. */
+  async copilotRemoveData(includeRuntime: boolean): Promise<{ removed: string[]; keptRuntime: boolean }> {
+    if (copilotActive(await this.read())) throw new CopilotConflictError('copilot_enabled', 'Switch GitHub Copilot off before removing its data.');
+    return this.copilot.removeData({ includeRuntime });
   }
 
   async copilotCancelDownload(): Promise<CopilotStatus> {

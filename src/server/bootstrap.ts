@@ -14,6 +14,7 @@ import type { KvoxJobHandler } from '@marinoscar/kvox-api/ports';
 import { DESKTOP_AI_SETTINGS_NAMESPACE } from './ai/desktop-ai-settings.js';
 import { createDefaultCopilotHost } from './ai/copilot-host.js';
 import { DesktopAi, loadProviderAdapters, type DesktopAiAdapters } from './ai/desktop-ai.js';
+import { stopCopilotSandboxes } from './ai/copilot-sandbox.js';
 import { createDesktopModule } from './app.module.js';
 import { applyPendingRestore, discardPreviousData, shippedMigrations } from './backup/backup.js';
 import { registerBackupJobs } from './backup/backup-jobs.js';
@@ -162,7 +163,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       adapters: providers.adapters,
       checkEgress: (host) => egress.check(host),
       // GitHub Copilot is an opt-in add-on: nothing of it is loaded until the user switches it on.
-      copilot: createDefaultCopilotHost({ dataDirectory: join(folder.root, 'copilot') }),
+      copilot: createDefaultCopilotHost({ folder, log: options.log }),
       log: options.log,
       onAllowedHosts: (hosts) => {
         egress.allow(hosts);
@@ -267,6 +268,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       housekeeping,
       jobHandlers: () => running.jobs.registeredHandlers(),
       async close() {
+        // Copilot off means no runtime process and no proxy listener: the quit path stops both first.
+        await stopCopilotSandboxes().catch(() => undefined);
         await running.housekeeping.stop();
         await running.jobs.stop();
         await running.app.close();
@@ -277,6 +280,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       },
     };
   } catch (error) {
+    await stopCopilotSandboxes().catch(() => undefined);
     await jobs?.stop().catch(() => undefined);
     await app?.close().catch(() => undefined);
     await aiBinding?.close().catch(() => undefined);

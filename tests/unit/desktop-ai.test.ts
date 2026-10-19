@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { createScriptedRuntime, describeKvoxAiConformance, type KvoxAiConformanceProvider } from '@marinoscar/kvox-ai/testing';
 import type { KvoxAiContext } from '@marinoscar/kvox-api/ports';
 import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
+import { COPILOT_RUNTIME_DOWNLOAD_HOSTS } from '../../src/server/ai/copilot-sandbox';
 import type { AiProviderAdapter } from '@marinoscar/platform-ai-providers';
 
 import { COPILOT_CONSENT_VERSION } from '../../src/server/ai/copilot-contract';
@@ -490,7 +491,7 @@ describe('GitHub Copilot add-on', () => {
     await ai.applyEgress();
     expect(ai.copilot.ready).toBe(false);
     expect(providers.adapters.copilot).toBeUndefined();
-    expect(calls).toEqual({ prepared: 0, downloads: 0, transports: 0, stopped: 0 });
+    expect(calls).toEqual({ prepared: 0, downloads: 0, transports: 0, stopped: 0, removed: [] });
     expect(Object.keys(require.cache).filter((path) => path.includes('copilot-sdk'))).toEqual([]);
     for (const host of COPILOT_EGRESS_HOSTS) expect(guard.isAllowed(host)).toBe(false);
     expect((await controller.copilotStatus()).enabled).toBe(false);
@@ -542,13 +543,18 @@ describe('GitHub Copilot add-on', () => {
     expect((await controller.copilotStatus()).runtime.state).toBe('missing');
     expect(harness.calls.downloads).toBe(0); // never without the user's action
 
+    // GitHub's release hosts are reachable for the download only.
+    const releaseHost = COPILOT_RUNTIME_DOWNLOAD_HOSTS.find((host) => !COPILOT_EGRESS_HOSTS.includes(host))!;
+    expect(harness.guard.isAllowed(releaseHost)).toBe(false);
     const started = await controller.copilotRuntimeDownload();
     expect(started.runtime).toMatchObject({ state: 'downloading', progress: 0 });
+    expect(harness.guard.isAllowed(releaseHost)).toBe(true);
     harness.progress(25, 100);
     expect((await controller.copilotStatus()).runtime).toMatchObject({ state: 'downloading', progress: 0.25 });
     harness.finishDownload();
     await vi_waitFor(async () => expect((await controller.copilotStatus()).runtime.state).toBe('ready'));
     expect(harness.calls.downloads).toBe(1);
+    await vi_waitFor(async () => expect(harness.guard.isAllowed(releaseHost)).toBe(false));
 
     // The adapter built after the download serves calls at once, with no restart.
     harness.transport.queue({ kind: 'answer', text: '# After the download\n' });
@@ -706,6 +712,18 @@ describe('GitHub Copilot add-on', () => {
     expect(calls.stopped).toBe(1);
     expect(await controller.copilotStatus()).toMatchObject({ enabled: false, models: [] });
     await expect(controller.copilotSignIn()).rejects.toMatchObject({ status: 409, response: { code: 'copilot_disabled' } });
+  });
+
+  it('removes the Copilot data only with Copilot off, and keeps the downloaded runtime unless asked', async () => {
+    const { ai, controller, calls } = setup();
+    await enableCopilot(ai, LOCAL_USER_ID);
+    await expect(controller.copilotRemoveData()).rejects.toMatchObject({ status: 409, response: { code: 'copilot_enabled' } });
+    expect(calls.removed).toEqual([]);
+
+    await ai.updateCopilot({ enabled: false }, LOCAL_USER_ID);
+    expect(await controller.copilotRemoveData()).toEqual({ removed: ['home', 'work'], keptRuntime: true });
+    expect(await controller.copilotRemoveData('true')).toEqual({ removed: ['home', 'work'], keptRuntime: false });
+    expect(calls.removed).toEqual([{ includeRuntime: false }, { includeRuntime: true }]);
   });
 
   it('brings Copilot back up at start when the stored settings have it on', async () => {

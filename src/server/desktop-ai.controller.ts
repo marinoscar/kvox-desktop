@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpException, Inject, Param, Patch, Post, Put, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpException, Inject, Param, Patch, Post, Put, Query, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 
 import { CurrentKvoxPrincipal, KvoxAuth } from '@marinoscar/kvox-api/core';
@@ -50,6 +50,9 @@ import type { EgressGuard } from './egress-guard.js';
 // POST   /desktop/ai/copilot/runtime/download starts the opt-in download (202);
 //                                             progress shows in the status.
 // DELETE /desktop/ai/copilot/runtime/download cancels it.
+// DELETE /desktop/ai/copilot/data             "Remove Copilot data" (`?includeRuntime=true`
+//                                             also removes the downloaded runtime); only
+//                                             with Copilot off (409 `copilot_enabled`).
 //
 // 409s: `runtime_not_ready`, `runtime_download_unavailable`, `copilot_disabled`,
 // `sign_in_not_started`, `consent_required`; a sign-in that ends signed out is
@@ -223,6 +226,12 @@ export class DesktopAiController {
   async copilotRuntimeDownloadCancel(): Promise<DesktopCopilotStatus> {
     await this.desktopAi.copilotCancelDownload();
     return this.copilotView();
+  }
+
+  @Delete('copilot/data')
+  @KvoxAuth()
+  async copilotRemoveData(@Query('includeRuntime') includeRuntime?: string): Promise<{ removed: string[]; keptRuntime: boolean }> {
+    return this.copilotCall(() => this.desktopAi.copilotRemoveData(includeRuntime === 'true'));
   }
 
   private async copilotView(): Promise<DesktopCopilotStatus> {

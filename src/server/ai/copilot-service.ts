@@ -42,7 +42,7 @@ type RuntimeStatus = CopilotStatus['runtime'];
 /** Raised for the 409s of the Copilot endpoints. */
 export class CopilotConflictError extends Error {
   constructor(
-    readonly code: 'runtime_not_ready' | 'runtime_download_unavailable' | 'copilot_disabled' | 'sign_in_not_started',
+    readonly code: 'runtime_not_ready' | 'runtime_download_unavailable' | 'copilot_disabled' | 'copilot_enabled' | 'sign_in_not_started',
     message: string,
   ) {
     super(message);
@@ -53,6 +53,8 @@ export class CopilotConflictError extends Error {
 /** Options of {@link CopilotService}. */
 export interface CopilotServiceOptions {
   host: CopilotHost;
+  /** Called when a runtime download ends, however it ends (the in-process egress guard drops the download hosts). */
+  onDownloadSettled?: () => void;
   /** One line per event; never carries a prompt, an answer or a token. */
   log: (line: string) => void;
 }
@@ -188,6 +190,19 @@ export class CopilotService {
     void this.runDownload(controller, generation);
   }
 
+  /** Whether a runtime download is running. */
+  get downloading(): boolean {
+    return this.download !== null;
+  }
+
+  /** "Remove Copilot data": only with Copilot off and the runtime stopped. */
+  async removeData(options: { includeRuntime?: boolean }): Promise<{ removed: string[]; keptRuntime: boolean }> {
+    if (this.adapter || this.download) {
+      throw new CopilotConflictError('copilot_enabled', 'Switch GitHub Copilot off before removing its data.');
+    }
+    return (await this.options.host.removeData?.(options)) ?? { removed: [], keptRuntime: false };
+  }
+
   /** Cancels a running download. */
   cancelDownload(): void {
     this.download?.abort();
@@ -214,6 +229,7 @@ export class CopilotService {
       }
     } finally {
       if (this.download === controller) this.download = null;
+      this.options.onDownloadSettled?.();
     }
   }
 
@@ -348,10 +364,11 @@ export class CopilotService {
   }
 }
 
-/** The `details.check` of a package error, else a thrown error's code, else `null` (never a message). */
+/** The `details.check` of a package `AiError` (in its response body), else a thrown error's code, else `null` (never a message). */
 function errorCheck(error: unknown): string | null {
-  const details = (error as { details?: { check?: unknown } } | null)?.details;
-  if (details && typeof details.check === 'string') return details.check;
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === 'string' ? code : null;
+  const candidate = error as { details?: { check?: unknown }; code?: unknown; getResponse?: () => { details?: { check?: unknown } } } | null;
+  const body = typeof candidate?.getResponse === 'function' ? candidate.getResponse() : undefined;
+  const check = body?.details?.check ?? candidate?.details?.check;
+  if (typeof check === 'string') return check;
+  return typeof candidate?.code === 'string' ? candidate.code : null;
 }

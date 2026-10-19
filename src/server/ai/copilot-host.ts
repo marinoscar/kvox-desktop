@@ -7,6 +7,11 @@ import type {
   PreparedCopilotRuntime,
 } from '@marinoscar/kvox-ai/copilot';
 
+import type { DataFolder } from '../data-folder.js';
+import { removeCopilotData, type RemovedCopilotData } from './copilot-data.js';
+import { bundledRuntimePath } from './copilot-runtime-location.js';
+import { COPILOT_RUNTIME_DOWNLOAD_HOSTS, startCopilotRuntimeSandbox } from './copilot-sandbox.js';
+
 // =============================================================================
 // The Copilot host seam (marinoscar/kvox-desktop#21; plugged into by #23)
 // =============================================================================
@@ -65,24 +70,30 @@ export interface CopilotHost {
   readonly canDownload: boolean;
   readonly prepareRuntime: CopilotRuntimeProvider;
   readonly createTransport: CopilotTransportFactory;
+  /**
+   * Deletes the Copilot directory's contents ("Remove Copilot data"; the downloaded runtime stays
+   * unless asked). Only called with the runtime stopped. Absent: nothing to delete.
+   */
+  removeData?(options: { includeRuntime?: boolean }): Promise<RemovedCopilotData>;
 }
 
 /** Options of {@link createDefaultCopilotHost}. */
 export interface DefaultCopilotHostOptions {
-  dataDirectory: string;
-  /** The launcher the app ships; default {@link findBundledRuntime}. */
+  /** The user data folder: `folder.copilot` is Copilot's private directory (never in a backup). */
+  folder: DataFolder;
+  /** One line per event (the sandbox's proxy and cleanup lines; already token-redacted). */
+  log: (line: string) => void;
+  /**
+   * The launcher the app ships. Default: {@link bundledRuntimePath} (the "with-copilot" flavour's
+   * `resources/copilot/`), else {@link findInstalledSdkRuntime} (a development checkout).
+   */
   bundledRuntimePath?: string | null;
   /**
-   * Where the opt-in download comes from (hosts, URL and pinned SHA-256, or a manifest, and the
-   * archive extractor). Absent: there is no download, and the download action answers 409
-   * `runtime_download_unavailable`. #23 supplies it.
+   * Where the opt-in download comes from: `url` with a pinned `sha256` (or a `manifestUrl`), and the
+   * archive `extract` hook. `allowedHosts` defaults to {@link COPILOT_RUNTIME_DOWNLOAD_HOSTS}.
+   * Absent: there is no download, and the download action answers 409 `runtime_download_unavailable`.
    */
-  download?: Omit<CopilotRuntimeDownload, 'onProgress' | 'signal'>;
-}
-
-/** The runtime launcher's file name on this platform. */
-function launcherName(): string {
-  return process.platform === 'win32' ? 'copilot-runtime.exe' : 'copilot-runtime';
+  download?: Omit<CopilotRuntimeDownload, 'onProgress' | 'signal' | 'allowedHosts'> & { allowedHosts?: readonly string[] };
 }
 
 /** The SDK's platform package suffix (`linux-x64`, `linuxmusl-x64`, `win32-arm64`, ...). */
@@ -96,43 +107,41 @@ function sdkPlatform(): string {
 }
 
 /**
- * The runtime launcher that ships with the app, if any: `<resources>/copilot/copilot-runtime`
- * in a packaged app (#23 puts it there), else the one inside the installed
- * `@github/copilot-sdk-<platform>` package (a development checkout). `null` when neither exists.
+ * The runtime launcher inside the installed `@github/copilot-sdk-<platform>` package: what a
+ * development checkout (`npm install`) has. The installer excludes these packages (#23), so a
+ * packaged app finds none. `null` when the package is not installed.
  */
-export function findBundledRuntime(): string | null {
-  const resources = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-  const candidates: string[] = [];
-  if (resources) candidates.push(join(resources, 'copilot', launcherName()));
+export function findInstalledSdkRuntime(): string | null {
   const platform = sdkPlatform();
   try {
     const manifest = require.resolve(`@github/copilot-sdk-${platform}/package.json`);
-    candidates.push(join(manifest, '..', 'prebuilds', platform, launcherName()));
+    const launcher = join(manifest, '..', 'prebuilds', platform, process.platform === 'win32' ? 'copilot-runtime.exe' : 'copilot-runtime');
+    return existsSync(launcher) ? launcher : null;
   } catch {
-    // The platform package is not installed.
+    return null;
   }
-  return candidates.find((path) => existsSync(path)) ?? null;
 }
 
-/** The in-process host: `prepareCopilotRuntime` and `createSdkCopilotTransport`. */
+/** The in-process host: `prepareCopilotRuntime`, and `createSdkCopilotTransport` behind the egress sandbox. */
 export function createDefaultCopilotHost(options: DefaultCopilotHostOptions): CopilotHost {
+  const dataDirectory = options.folder.copilot;
+  const canDownload = options.download?.url !== undefined || options.download?.manifestUrl !== undefined;
   return {
-    dataDirectory: options.dataDirectory,
-    canDownload: options.download !== undefined,
+    dataDirectory,
+    canDownload,
     async prepareRuntime(request) {
       const { prepareCopilotRuntime } = await import('@marinoscar/kvox-ai/copilot');
-      const bundled = options.bundledRuntimePath === undefined ? findBundledRuntime() : options.bundledRuntimePath;
-      if (request.download && !options.download) {
-        throw new CopilotDownloadUnavailableError();
-      }
+      const bundled = options.bundledRuntimePath === undefined ? (bundledRuntimePath() ?? findInstalledSdkRuntime()) : options.bundledRuntimePath;
+      if (request.download && !canDownload) throw new CopilotDownloadUnavailableError();
       return prepareCopilotRuntime({
         dataDirectory: request.dataDirectory,
-        // A bundled launcher is always preferred; the download only when asked for.
+        // A bundled launcher is always preferred (and never downloaded over); the download only when asked for.
         ...(bundled ? { bundledRuntimePath: bundled } : {}),
         ...(request.download && !bundled && options.download
           ? {
               download: {
                 ...options.download,
+                allowedHosts: options.download.allowedHosts ?? COPILOT_RUNTIME_DOWNLOAD_HOSTS,
                 ...(request.onProgress ? { onProgress: request.onProgress } : {}),
                 ...(request.signal ? { signal: request.signal } : {}),
               },
@@ -142,9 +151,25 @@ export function createDefaultCopilotHost(options: DefaultCopilotHostOptions): Co
     },
     async createTransport(runtime) {
       const { createSdkCopilotTransport } = await import('@marinoscar/kvox-ai/copilot');
+      // The runtime child process is forced through the allowlisting proxy. The SDK spawns it with a
+      // copy of THIS process's environment (the transport has no `env` option), so the sandbox's
+      // variables go in BEFORE the transport starts it, and come out when the sandbox stops.
+      let transport: CopilotTransport | undefined;
+      const sandbox = await startCopilotRuntimeSandbox({
+        dataDirectory,
+        log: options.log,
+        stopRuntime: async () => {
+          await transport?.stop?.();
+        },
+      });
+      sandbox.apply();
       // The SDK honours COPILOT_CLI_PATH for the runtime launcher (read in its client).
       process.env.COPILOT_CLI_PATH = runtime.runtimePath;
-      return createSdkCopilotTransport({ baseDirectory: runtime.baseDirectory, workingDirectory: runtime.workingDirectory });
+      const created = createSdkCopilotTransport({ baseDirectory: runtime.baseDirectory, workingDirectory: runtime.workingDirectory });
+      transport = created;
+      // Stopping the transport stops the sandbox: the runtime, any straggler, the proxy and the environment.
+      return { ...created, stop: () => sandbox.stop() };
     },
+    removeData: (removeOptions) => removeCopilotData(options.folder, removeOptions),
   };
 }

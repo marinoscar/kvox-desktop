@@ -14,6 +14,10 @@ import { join } from 'node:path';
 //   secrets.bin      provider keys, each one a `safeStorage` blob (KVOX_SECRETS)
 //   settings.json    the shell's own preferences (written by the main process)
 //   tmp/             scratch files and upload parts; emptied at every start
+//   copilot/         the GitHub Copilot runtime's private state (marinoscar/kvox-desktop#23):
+//                    home/ (COPILOT_HOME: sessions and sign-in material), work/ (an empty
+//                    working directory), runtime/<version>/ (the downloaded runtime).
+//                    NEVER in a backup or a data export, never touched by a restore
 //
 // Transient, during a restore only: `restore-staging/` (an archive being
 // checked), `restore-pending/` (checked, applied at the next server start) and
@@ -31,6 +35,8 @@ export interface DataFolder {
   readonly secrets: string;
   readonly settings: string;
   readonly tmp: string;
+  /** The Copilot runtime's private directory. Excluded from backups and exports. */
+  readonly copilot: string;
   readonly uploadParts: string;
   readonly restoreStaging: string;
   readonly restorePending: string;
@@ -48,6 +54,7 @@ export function dataFolder(root: string): DataFolder {
     secrets: join(root, 'secrets.bin'),
     settings: join(root, 'settings.json'),
     tmp: join(root, 'tmp'),
+    copilot: join(root, 'copilot'),
     uploadParts: join(root, 'tmp', 'parts'),
     restoreStaging: join(root, 'restore-staging'),
     restorePending: join(root, 'restore-pending'),

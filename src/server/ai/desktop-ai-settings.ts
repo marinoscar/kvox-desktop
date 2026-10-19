@@ -4,6 +4,7 @@ import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
 import type { KvoxSettingsNamespaceDef } from '@marinoscar/kvox-api/ports';
 
 import { isLoopback } from '../egress-guard.js';
+import { COPILOT_RUNTIME_DOWNLOAD_HOSTS } from './copilot-sandbox.js';
 import { COPILOT_CONSENT_VERSION, CopilotSettingsSchema, type CopilotSettings } from './copilot-contract.js';
 
 // =============================================================================
@@ -173,11 +174,12 @@ export function copilotActive(settings: DesktopAiSettings): boolean {
 
 /**
  * The hosts the server may reach under these settings: the active provider's
- * host, plus the Copilot hosts while (and only while) Copilot is on. A server on
+ * host, plus the Copilot hosts while (and only while) Copilot is on, and GitHub's release
+ * hosts while (and only while) its one-time runtime download runs. A server on
  * this device needs no entry (loopback is always allowed), so it answers an empty
  * list.
  */
-export function allowedHostsFor(settings: DesktopAiSettings): string[] {
+export function allowedHostsFor(settings: DesktopAiSettings, options: { runtimeDownload?: boolean } = {}): string[] {
   const hosts: string[] = [];
   if (settings.provider === 'openai') hosts.push(OPENAI_HOST);
   else if (settings.provider === 'openai-compatible' && settings.openaiCompatible.baseUrl) {
@@ -186,6 +188,8 @@ export function allowedHostsFor(settings: DesktopAiSettings): string[] {
   }
   if (copilotActive(settings)) {
     for (const host of COPILOT_EGRESS_HOSTS) if (!hosts.includes(host)) hosts.push(host);
+    // The one-time runtime download (GitHub's release hosts), for as long as it runs.
+    if (options.runtimeDownload) for (const host of COPILOT_RUNTIME_DOWNLOAD_HOSTS) if (!hosts.includes(host)) hosts.push(host);
   }
   return hosts;
 }

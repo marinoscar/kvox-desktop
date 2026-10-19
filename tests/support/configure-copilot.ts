@@ -2,6 +2,8 @@ import { join } from 'node:path';
 
 import { createCopilotMockTransport, type CopilotMockTransport, type CopilotMockTransportOptions, type PreparedCopilotRuntime } from '@marinoscar/kvox-ai/copilot';
 
+import { AiError } from '@marinoscar/platform-ai-providers';
+
 import { COPILOT_CONSENT_VERSION } from '../../src/server/ai/copilot-contract';
 import type { CopilotHost } from '../../src/server/ai/copilot-host';
 import type { DesktopAi } from '../../src/server/ai/desktop-ai';
@@ -23,6 +25,7 @@ export interface CopilotHostCalls {
   downloads: number;
   transports: number;
   stopped: number;
+  removed: Array<{ includeRuntime?: boolean }>;
 }
 
 export interface MockCopilotHost {
@@ -44,7 +47,7 @@ export interface MockCopilotHostOptions extends CopilotMockTransportOptions {
 export function mockCopilotHost(options: MockCopilotHostOptions = {}): MockCopilotHost {
   const { runtime = 'ready', ...transportOptions } = options;
   const transport = createCopilotMockTransport(transportOptions);
-  const calls: CopilotHostCalls = { prepared: 0, downloads: 0, transports: 0, stopped: 0 };
+  const calls: CopilotHostCalls = { prepared: 0, downloads: 0, transports: 0, stopped: 0, removed: [] };
   Object.assign(transport, {
     stop: async () => {
       calls.stopped += 1;
@@ -68,7 +71,7 @@ export function mockCopilotHost(options: MockCopilotHostOptions = {}): MockCopil
     async prepareRuntime(request) {
       calls.prepared += 1;
       if (installed) return prepared;
-      if (!request.download) throw Object.assign(new Error('no runtime'), { details: { check: 'runtime_missing' } });
+      if (!request.download) throw new AiError('AI_PROVIDER_UNAVAILABLE', 'no runtime', { details: { check: 'runtime_missing' } });
       calls.downloads += 1;
       onProgress = request.onProgress;
       await new Promise<void>((resolve, reject) => {
@@ -81,6 +84,10 @@ export function mockCopilotHost(options: MockCopilotHostOptions = {}): MockCopil
     async createTransport() {
       calls.transports += 1;
       return transport;
+    },
+    async removeData(options) {
+      calls.removed.push(options);
+      return { removed: ['home', 'work'], keptRuntime: !options.includeRuntime };
     },
   };
   return {
