@@ -46,6 +46,14 @@ flowchart LR
   Ai -- "allowlist: AI provider only" --> Cloud[(OpenAI or compatible)]
 ```
 
+**The renderer shell.** The window around every screen is `KvoxAppShell` from `@marinoscar/kvox-web/shell`, the component KVox web renders: a left rail of icons and labels (Notes, Knowledge, Review, Ask; Settings pinned at the foot; collapsible), an app bar with the KVox mark and name, the light/dark toggle and a user menu, and a bottom bar under 600 px. Desktop defines none of it. The bindings live in `src/renderer/src/App.tsx` (the providers and the routes) and `src/renderer/src/shell.tsx`:
+
+- **Identity.** `LocalIdentityProvider` and a `PlatformHostProvider` from the connection (`userId`, `permissions`; the display name is the operating-system user name, else "You"). There is no sign-in, sign-out or organization switcher, and the shell makes no request to a platform API: the host's API is a stub that rejects (`tests/unit/shell.test.tsx` asserts that nothing but the local server's routes is called).
+- **Rail preference.** `ShellPreferencesProvider` over the shell settings: `shell.railCollapsed` in `<userData>/settings.json`, read and written through the preload bridge (`shellPreferences`, `setShellPreferences`), so it survives a restart.
+- **Navigation.** `createKvoxNavigation({ include: ['notes', 'graph', 'review', 'ask'], settingsPath: '/settings', settingsSections })`. Templates is a Settings card, not a row. Knowledge, Review and Ask carry the `graph` feature, registered with `registerSettingsFeature('graph', ...)` over the connected-knowledge switch, so turning it on in Settings shows them without a restart.
+- **User menu.** "Open data folder" and "About KVox" run the same actions as the application menu's Help items (`openDataFolder`, `showAbout` on the bridge).
+- **Routes and links.** `renderKvoxRoutes`, `defaultKvoxLinks` and `AiKeyRequired` are the package's; Desktop keeps only which pages it wraps (`routes.tsx`). No breakpoint is read here: the five gates are the platform's.
+
 ## Tech stack
 
 | Concern | Choice | Source |
@@ -181,7 +189,7 @@ Host duties Desktop carries for the graph:
 |---|---|---|
 | AI provider | `/settings/ai` | The provider, model and server URL, then the platform's key card ([AI providers](#ai-providers)) |
 | Connected knowledge | `/settings/knowledge` | The `ai.graphEnabled` switch |
-| Note Templates | `/settings/note-templates` | The notes slice's templates page (it left the top bar for the hub, as on web) |
+| Note Templates | `/settings/note-templates` | The notes slice's templates page (a card of the hub, not a rail row, as on web) |
 | Data and privacy | `/settings/data` | The data folder, Export data and Restore, how saved keys are protected |
 | Updates | `/settings/updates` | The opt-in "Check for updates" |
 
@@ -191,7 +199,7 @@ Restore and "Store keys without system encryption" ask for a typed confirmation 
 
 KVox Desktop looks like KVox web because it uses the same code for it, and defines none of it. The theme is `createKvoxTheme('light' | 'dark')` of `@marinoscar/kvox-web/brand` (the indigo and amber palette, dark `#0f1117` ground and `#171a23` cards with a 1px divider border, sentence-case buttons), applied by the platform's `ShellRoot` (`@marinoscar/platform-web/shell/ui`, wrapped by `DesktopThemeRoot` in `src/renderer/src/theme.tsx`). The Inter font is `@marinoscar/kvox-web/brand/fonts/inter.css`, imported in `main.tsx`: electron-vite emits the woff2 into the app bundle, so no request is made and the CSP (`font-src 'self' data:`) is unchanged (ADR-0004). The app icons come from the package's `mark.svg` too (Packaging, below).
 
-- **Light, dark or system.** The choice is `ShellRoot`'s (`useShellTheme`, default `system`). A temporary button in the app bar sets it, until the shared shell (#18) brings its own toggle, and so does **View > Toggle light/dark** of the application menu.
+- **Light, dark or system.** The choice is `ShellRoot`'s (`useShellTheme`, default `system`). The shell's toggle in the app bar switches it, and so does **View > Toggle light/dark** of the application menu.
 - **It survives a restart.** `ShellRoot` keeps it in `localStorage` (`theme_mode`, stable because the page is always `kvox://app`). The main process needs it before any page exists, so the page also reports it and main keeps a copy as `themeMode` in `<userData>/settings.json`; that copy is the fallback when `localStorage` comes back empty.
 - **No white flash.** The `BrowserWindow` is created with `backgroundColor` set to the page ground of the saved mode (`kvoxTokens` of the brand package; `system` asks `nativeTheme`), and `nativeTheme.themeSource` follows the choice, so scroll bars and native menus match.
 - **Rule.** Nothing brand-related is defined in this repository: a colour, a font stack or a logo that is missing belongs in `@marinoscar/kvox-web/brand`. `tests/unit/theme.test.ts` fails on a `createTheme(` call or a colour literal in `src/renderer` or `src/main`; `tests/e2e/smoke.spec.ts` checks the computed colours, Inter, the persisted mode and the window colour in the packaged app, and attaches light and dark screenshots to the report.
@@ -227,8 +235,9 @@ The non-secret choices are the system settings namespace `desktopAi` (in the dat
 src/main/        Electron main process: window, kvox:// scheme, window egress guard, server lifecycle,
                  safeStorage and Notification for the server, backup dialogs, import (dialog, dropped files),
                  migration utility processes (node-scripts.ts), opt-in updates (updates.ts, update-policy.ts)
-src/preload/     Preload bridge (kvoxDesktop: connection, data folder, backup dialogs, secret storage, import, updates, theme mode)
-src/renderer/    React app: KvoxWebHost over loopback, kvox-web notes, graph and Ask screens (routes.tsx),
+src/preload/     Preload bridge (kvoxDesktop: connection, data folder, backup dialogs, secret storage, import, updates, theme mode, shell preferences, user-menu commands)
+src/renderer/    React app: KvoxAppShell with its bindings (App.tsx, shell.tsx), KvoxWebHost over loopback,
+                 kvox-web notes, graph and Ask screens (routes.tsx),
                  the settings hub, its registry and one page per card (settings/), the Import action and drop target (import/)
 src/server/      Utility process: Nest 11 + Fastify 5 on 127.0.0.1, PGlite, server egress guard,
                  the housekeeping timer (housekeeping.ts), the SHACL runner (shacl-runner.ts)
