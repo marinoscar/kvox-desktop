@@ -1,12 +1,21 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-import type { KvoxDesktopBridge } from '../shared/protocol';
+import { MENU_CHANNELS, type KvoxDesktopBridge } from '../shared/protocol';
 
 // The renderer's one door to the shell: where the local server listens and the
 // per-launch token, the native backup dialogs, the secret-storage status, the
 // import (the dialog, and the paths of files dropped on the window) and the
-// opt-in updates.
+// opt-in updates, and the three commands the application menu sends (the page
+// gets the payload, never the IPC event).
 // Nothing else of Node or Electron reaches the page.
+function subscribe(channel: string, handler: (payload: unknown) => void): () => void {
+  const listener = (_event: unknown, payload: unknown) => handler(payload);
+  ipcRenderer.on(channel, listener);
+  return () => {
+    ipcRenderer.removeListener(channel, listener);
+  };
+}
+
 const bridge: KvoxDesktopBridge = {
   connection: () => ipcRenderer.invoke('kvox:connection'),
   dataFolder: () => ipcRenderer.invoke('kvox:data-folder'),
@@ -24,6 +33,9 @@ const bridge: KvoxDesktopBridge = {
       'kvox:import-paths',
       Array.from(files, (file) => webUtils.getPathForFile(file)).filter((path) => path.length > 0),
     ),
+  onMenuNavigate: (handler) => subscribe(MENU_CHANNELS.navigate, (payload) => handler(payload)),
+  onMenuToggleTheme: (handler) => subscribe(MENU_CHANNELS.toggleTheme, () => handler()),
+  onMenuImport: (handler) => subscribe(MENU_CHANNELS.importFiles, () => handler()),
 };
 
 contextBridge.exposeInMainWorld('kvoxDesktop', bridge);

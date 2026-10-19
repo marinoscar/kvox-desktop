@@ -5,6 +5,8 @@ import { pathToFileURL } from 'node:url';
 import { BrowserWindow, Notification, app, dialog, ipcMain, net, protocol, session, utilityProcess, type UtilityProcess } from 'electron';
 
 import type { DesktopConnection, FromServer, ToServer } from '../shared/protocol';
+import { windowIconPath } from './app-icon';
+import { installApplicationMenu } from './menu';
 import { runNodeScript } from './node-scripts';
 import { registerImportIpc } from './import';
 import { runSecretOp, secretStorageStatus } from './secret-storage';
@@ -40,7 +42,10 @@ import { DesktopUpdates } from './updates';
 //   5. IMPORT (marinoscar/kvox#585): the native "Import…" dialog and files
 //      dropped on the window are read here and streamed to the local server's
 //      upload routes (`import.ts`); the window never reads a file itself.
-//   6. OPT-IN UPDATES (`updates.ts`): off until the user turns them on; the
+//   6. THE APPLICATION MENU (`menu.ts`, marinoscar/kvox-desktop#20): KVox's own,
+//      with no remote link and no DevTools or Reload in a packaged app; it sends
+//      the window commands (navigate, toggle theme, import) over IPC.
+//   7. OPT-IN UPDATES (`updates.ts`): off until the user turns them on; the
 //      updater's own session reaches GitHub Releases only while they are on.
 //
 // The user data folder is `app.getPath('userData')` (KVox under the OS's
@@ -246,6 +251,8 @@ function createWindow(): void {
     height: 860,
     show: false,
     title: 'KVox',
+    // Linux and Windows show this in the taskbar and the switcher (undefined on macOS: the bundle's .icns).
+    icon: windowIconPath({ platform: process.platform, isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -287,6 +294,7 @@ if (!app.requestSingleInstanceLock()) {
     installEgressGuard();
     updates.start();
     registerAppProtocol();
+    installApplicationMenu({ window: () => mainWindow, log });
     connection = startServer();
     connection.catch(() => undefined);
     createWindow();

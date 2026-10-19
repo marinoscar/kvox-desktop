@@ -15,6 +15,7 @@ import { KvoxWebHostProvider } from '@marinoscar/kvox-web/core/headless';
 import type { DesktopConnection } from '../../shared/protocol';
 import { createDesktopHost } from './host';
 import { ImportProvider } from './import/ImportProvider';
+import { MenuCommands } from './MenuCommands';
 import { DesktopKnowledgeProvider, useKnowledgeState } from './knowledge';
 import { desktopKnowledgeRoutes, desktopNotesRoutes, renderKvoxRoutes } from './routes';
 import { renderDesktopSettingsRoutes } from './settings/routes';
@@ -29,7 +30,9 @@ import { renderDesktopSettingsRoutes } from './settings/routes';
 // marinoscar/kvox#620) the knowledge destinations and routes are not mounted;
 // the graph itself is kept and comes back when the switch is turned on.
 
-const theme = createTheme({ colorSchemes: { light: true, dark: true } });
+// `data` selector: the View > Toggle light/dark menu item (and #17's toggle) switches the scheme by hand;
+// the default `media` selector would follow the OS only.
+const theme = createTheme({ cssVariables: { colorSchemeSelector: 'data' }, colorSchemes: { light: true, dark: true } });
 
 export function App({ connection }: { connection: DesktopConnection }) {
   const knowledge = useKnowledgeState(connection);
@@ -47,6 +50,7 @@ export function App({ connection }: { connection: DesktopConnection }) {
         <KvoxWebHostProvider host={host}>
           <HashRouter>
             <ImportProvider>
+              <MenuCommands />
               <AppBar position="sticky" color="default" elevation={1}>
                 <Toolbar sx={{ gap: 2 }}>
                   <Typography variant="h6" component="span">

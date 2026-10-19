@@ -86,6 +86,58 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   const first = await launch('cold');
   const { page } = first;
 
+  // ---- The application menu (marinoscar/kvox-desktop#20) -------------------------
+  // Triggered through Electron's own menu, as a click would: New note navigates, Toggle light/dark switches
+  // the theme; Reload and DevTools exist only in an app that is not packaged; no item opens a link.
+  const clickMenuItem = (label: string) =>
+    first.app.evaluate(({ Menu }, wanted) => {
+      const find = (items: Electron.MenuItem[]): Electron.MenuItem | undefined => {
+        for (const item of items) {
+          if (item.label === wanted) return item;
+          const inner = item.submenu ? find(item.submenu.items) : undefined;
+          if (inner) return inner;
+        }
+        return undefined;
+      };
+      const item = find(Menu.getApplicationMenu()?.items ?? []);
+      if (!item) throw new Error(`no menu item "${wanted}"`);
+      item.click();
+    }, label);
+  const menuInfo = await first.app.evaluate(({ Menu, app: electronApp }) => {
+    const roles: string[] = [];
+    const labels: string[] = [];
+    const walk = (items: Electron.MenuItem[]) => {
+      for (const item of items) {
+        roles.push(String(item.role ?? ''));
+        labels.push(item.label);
+        if (item.submenu) walk(item.submenu.items);
+      }
+    };
+    walk(Menu.getApplicationMenu()?.items ?? []);
+    return { roles, labels, isPackaged: electronApp.isPackaged };
+  });
+  for (const label of ['New note', 'Import…', 'Settings', 'Toggle light/dark', 'About KVox', 'Open data folder', 'View licences']) {
+    expect(menuInfo.labels, label).toContain(label);
+  }
+  const developerRoles = ['reload', 'forcereload', 'toggledevtools'].map((role) => menuInfo.roles.map((r) => r.toLowerCase()).includes(role));
+  expect(developerRoles, 'Reload and Developer Tools exist only while unpackaged').toEqual([!menuInfo.isPackaged, !menuInfo.isPackaged, !menuInfo.isPackaged]);
+  const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  // MUI's `data` selector marks <html> with data-light or data-dark.
+  const scheme = () => page.evaluate(() => (document.documentElement.hasAttribute('data-dark') ? 'dark' : 'light'));
+  const schemeBefore = await scheme();
+  const backgroundBefore = await background();
+  await clickMenuItem('Toggle light/dark');
+  await expect.poll(scheme).not.toBe(schemeBefore);
+  expect(await background(), 'the page colours changed with the scheme').not.toBe(backgroundBefore);
+  await clickMenuItem('Toggle light/dark');
+  await expect.poll(scheme).toBe(schemeBefore);
+  await clickMenuItem('New note');
+  await page.waitForURL(/#\/notes\/new$/);
+  await expect(page.getByRole('heading', { name: 'New note' })).toBeVisible();
+  await clickMenuItem('Settings');
+  await page.waitForURL(/#\/settings$/);
+  await page.getByRole('link', { name: 'Notes' }).click();
+
   // ---- Settings: the hub of five cards, then the provider, its model, its key ----
   await page.getByRole('link', { name: 'Settings' }).click();
   await expect(page.getByRole('heading', { name: 'Settings', level: 4 })).toBeVisible();

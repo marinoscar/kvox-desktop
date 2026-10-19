@@ -18,7 +18,8 @@
     "test": "vitest run",
     "e2e": "playwright test",
     "dist": "npm run build && node scripts/dist.mjs --publish never",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "icons": "node scripts/build-icons.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.10",
@@ -76,6 +77,7 @@
     "@mui/x-data-grid": "^9.15.0",
     "@playwright/test": "^1.64.1",
     "@react-sigma/core": "^5.0.6",
+    "@resvg/resvg-js": "2.6.2",
     "@swc/core": "^1.15.0",
     "@tanstack/react-virtual": "^3.14.12",
     "@tiptap/core": "^3.31.3",
