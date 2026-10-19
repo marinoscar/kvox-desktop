@@ -2,3 +2,7 @@
 build/linux/* text eol=lf
 # The PNG icon is binary: never convert line endings in it.
 build/linux/*.png binary
+# Generated icons (npm run icons) are binary: never convert line endings in them.
+build/*.ico binary
+build/*.icns binary
+build/linux/icons/*.png binary

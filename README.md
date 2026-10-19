@@ -199,10 +199,10 @@ src/server/      Utility process: Nest 11 + Fastify 5 on 127.0.0.1, PGlite, serv
   ports/         One adapter per port (below)
   backup/        .kvoxbackup export and restore, run as jobs
 src/shared/      Main <-> server message types
-scripts/         prepare-db.mjs (schema, migrations, client),
+scripts/         prepare-db.mjs (schema, migrations, client), build-icons.mjs (the icons, `npm run icons`),
                  dist.mjs (installers, signed when the secrets exist), packaged-app.mjs (asar and fuse
                  checks, the e2e copy), release-files.mjs (latest-mac.yml merge, SHA256SUMS, publish gate)
-build/           Packaging resources: macOS entitlements, the NSIS "Remove my data" step, the AppArmor profile
+build/           Packaging resources: macOS entitlements, the NSIS "Remove my data" step, the AppArmor profile, the generated icons (`npm run icons`)
 .github/         ci.yml (every PR: four runners, unsigned installers, e2e on the packaged app), release.yml (v* tags)
 tests/unit/      Vitest: the ports conformance kit, jobs (timeouts, back-off, a real kill mid-job), egress, secrets, backup
 tests/crash/     The child process the crash-recovery test kills
@@ -323,6 +323,8 @@ Turning it off stops the timer and closes the session again. No user data is sen
   | GrantFileProtocolExtraPrivileges | off | The window is served from `kvox://` |
   | LoadBrowserProcessSpecificV8Snapshot | off | |
 
+- **Icons.** Every icon is generated from the KVox mark, never drawn or copied by hand: `npm run icons` reads `@marinoscar/kvox-web/brand/assets/mark.svg` from `node_modules` and rasterizes each size from the vector (`@resvg/resvg-js`, pinned; no network), writing `build/icon.ico` (16 to 256, seven sizes), `build/icon.icns` (16 to 1024 with the @2x entries), `build/linux/icon.png` (512) and `build/linux/icons/<n>x<n>.png` (16 to 512). `npm run icons -- --check` writes nothing and exits 1 when a committed icon differs from a regeneration (a changed `mark.svg` fails it until `npm run icons` is run again); `tests/unit/packaging.test.ts` runs the same comparison on Linux whenever the installed package carries the mark. `electron-builder.yml` points `win.icon`, the NSIS installer and uninstaller, `mac.icon` and `linux.icon` at them; the window icon (taskbar and switcher on Linux and Windows) is read from the resources folder when packaged and from `build/` in development (`src/main/app-icon.ts`).
+- **Application menu** (`src/main/menu.ts`). KVox's own, not Electron's default: File (New note, Import…, Settings, Quit), Edit, View (Toggle light/dark, zoom, full screen), Window and Help (About KVox with the Electron, Chromium, Node and `@marinoscar/*` versions, Open data folder, View licences, which opens the bundled `LICENSE.txt`). Reload and Developer Tools exist only when `!app.isPackaged`. No item opens a remote URL ([ADR-0004](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0004-desktop-data-local-only.md)); `tests/unit/menu.test.ts` walks the template for one. The menu sends the window `menu:navigate`, `menu:toggle-theme` and `menu:import` (`src/shared/protocol.ts`); the renderer validates the path (`parseMenuPath`) and acts (`src/renderer/src/MenuCommands.tsx`).
 - **macOS**: hardened runtime; one entitlement, `com.apple.security.cs.allow-jit` (V8 compiles JavaScript and WebAssembly, PGlite included, at run time). Not granted: unsigned executable memory, disabled library validation.
 - **Windows**: per-user NSIS (no admin), x64 and arm64 in one installer; the Prisma schema engine is x64 and runs emulated on arm64.
 
