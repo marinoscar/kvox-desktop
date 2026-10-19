@@ -5,6 +5,8 @@ import { join, resolve } from 'node:path';
 
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
+import { openSettingsCard } from '../support/configure-ai';
+
 // =============================================================================
 // Updates are opt-in (marinoscar/kvox#587, ADR-0004)
 // =============================================================================
@@ -86,8 +88,7 @@ async function quiet(ms: number): Promise<void> {
 test('no update request is made unless the user turns on "Check for updates"', async () => {
   // ---- Off (the default): a whole launch, the settings page included, and no request ----
   let page = await launch();
-  await page.getByRole('link', { name: 'Settings' }).click();
-  await expect(page.getByRole('heading', { name: 'Updates' })).toBeVisible();
+  await openSettingsCard(page, 'Updates');
   const toggle = page.getByLabel('Check for updates');
   await expect(toggle).not.toBeChecked();
   await expect(page.getByRole('status').filter({ hasText: 'does not contact any update server' })).toBeVisible();
@@ -108,7 +109,7 @@ test('no update request is made unless the user turns on "Check for updates"', a
   await expect.poll(() => feedRequests.length, { timeout: 60_000 }).toBeGreaterThan(0);
 
   // ---- Off again: the next launch makes no request ---------------------------------
-  await page.getByRole('link', { name: 'Settings' }).click();
+  await openSettingsCard(page, 'Updates');
   await expect(page.getByLabel('Check for updates')).toBeChecked();
   await expect(page.getByRole('status').filter({ hasText: 'is the latest version' })).toBeVisible({ timeout: 60_000 });
   await page.getByLabel('Check for updates').click();

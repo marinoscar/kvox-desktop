@@ -6,7 +6,7 @@ import { useHasPermission } from '@marinoscar/kvox-web/core/headless';
 import type { KvoxRouteDef } from '@marinoscar/kvox-web/core/ui';
 import { GraphEntityPage, graphNotePageSlots, graphNotesLibrarySlots, kvoxGraphRoutes } from '@marinoscar/kvox-web/graph/ui';
 import type { GraphEntityPageSlots } from '@marinoscar/kvox-web/graph/ui';
-import { NewNotePage, NotePage, NotesPage, UserNoteTemplatesPage, kvoxNotesRoutes } from '@marinoscar/kvox-web/notes/ui';
+import { NewNotePage, NotePage, NotesPage, kvoxNotesRoutes } from '@marinoscar/kvox-web/notes/ui';
 
 import { ImportButton } from './import/ImportProvider';
 import { desktopNotesAiAccess } from './notesAi';
@@ -30,17 +30,19 @@ import { desktopNotesAiAccess } from './notesAi';
 const NotesPageWithImport = () => <NotesPage secondaryAction={<ImportButton />} slots={graphNotesLibrarySlots} />;
 const NewNotePageWithAi = () => <NewNotePage ai={desktopNotesAiAccess} />;
 const NotePageWithSlots = () => <NotePage ai={desktopNotesAiAccess} slots={graphNotePageSlots} />;
-const UserNoteTemplatesPageWithAi = () => <UserNoteTemplatesPage ai={desktopNotesAiAccess} />;
 const entitySlots: GraphEntityPageSlots = { AskButton: AskEntityButtonSlot, AskPanel: AskEntityPanelSlot };
 const GraphEntityPageWithAsk = () => <GraphEntityPage slots={entitySlots} />;
 
-export const desktopNotesRoutes: readonly KvoxRouteDef[] = kvoxNotesRoutes.map((route) => {
-  if (route.path === '/notes') return { ...route, Component: NotesPageWithImport };
-  if (route.path === '/notes/new') return { ...route, Component: NewNotePageWithAi };
-  if (route.path === '/notes/:id') return { ...route, Component: NotePageWithSlots };
-  if (route.path === '/settings/note-templates') return { ...route, Component: UserNoteTemplatesPageWithAi };
-  return route;
-});
+// `/settings/note-templates` is a Settings card: its page is mounted with the other settings pages
+// (`settings/routes.tsx`), so the notes slice's own entry for it is left out here.
+export const desktopNotesRoutes: readonly KvoxRouteDef[] = kvoxNotesRoutes
+  .filter((route) => !route.path.startsWith('/settings/'))
+  .map((route) => {
+    if (route.path === '/notes') return { ...route, Component: NotesPageWithImport };
+    if (route.path === '/notes/new') return { ...route, Component: NewNotePageWithAi };
+    if (route.path === '/notes/:id') return { ...route, Component: NotePageWithSlots };
+    return route;
+  });
 
 /** The graph routes (Knowledge, the explorer, the overview, Review, imports) and Ask's. */
 export const desktopKnowledgeRoutes: readonly KvoxRouteDef[] = [

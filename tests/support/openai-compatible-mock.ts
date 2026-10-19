@@ -76,6 +76,12 @@ export async function startOpenAiCompatibleMock(text: string, respond?: MockResp
         response.end(JSON.stringify({ error: { message: `Incorrect API key provided: ${authorization ?? ''}`, type: 'invalid_request_error', code: 'invalid_api_key' } }));
         return;
       }
+      if (request.method === 'GET' && request.url?.endsWith('/models')) {
+        // What `verifyKey` and `listModels` ask (the key test of Settings > AI provider).
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ object: 'list', data: [{ id: 'mock-model', object: 'model', created: 0, owned_by: 'mock' }] }));
+        return;
+      }
       if (request.method !== 'POST' || !request.url?.endsWith('/chat/completions')) {
         response.writeHead(404, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify({ error: { message: 'not found' } }));
