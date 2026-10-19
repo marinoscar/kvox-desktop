@@ -6,7 +6,7 @@ Single-user, offline-first desktop application for meeting notes and a personal 
 
 - Inputs: PDF transcripts, KVox transcript export JSON, Markdown or text, and KVox note exports. There is no transcription ([ADR-0006](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0006-desktop-inputs-no-transcription.md)).
 - Outputs: AI notes, a connected-knowledge graph, search, and Ask.
-- AI: OpenAI or an OpenAI-compatible base URL. GitHub Copilot is an extension ([ADR-0005](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0005-ai-architecture-shared-harness.md)).
+- AI: OpenAI or an OpenAI-compatible base URL. GitHub Copilot is an opt-in add-on ([ADR-0005](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0005-ai-architecture-shared-harness.md)).
 - Data stays on the device. The AI provider is the only cloud egress ([ADR-0004](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0004-desktop-data-local-only.md)).
 
 ## Core principle
@@ -159,7 +159,7 @@ How facts get in:
 3. You review the proposal. Nothing enters the graph until you send it.
 4. Anything a meeting never said, you can set by hand on the person's page. Each manual edit is stored with its own evidence ("Set by hand"), and Ask cites it that way.
 
-Ask answers from the graph through the packages' tools (`search`, `list_commitments`, `neighbors`, `timeline`, …). It never writes SQL. It needs a model with tool calling: OpenAI or an OpenAI-compatible server. GitHub Copilot is planned without Ask. The reference questions, answered by the e2e test (`tests/e2e/graph-ask.spec.ts`) on synthetic meetings:
+Ask answers from the graph through the packages' tools (`search`, `list_commitments`, `neighbors`, `timeline`, …). It never writes SQL. It needs a model with tool calling: OpenAI or an OpenAI-compatible server. GitHub Copilot has no tool calling, so with Copilot on Ask runs on the OpenAI provider when its key is saved and is hidden, with the reason, otherwise. The reference questions, answered by the e2e test (`tests/e2e/graph-ask.spec.ts`) on synthetic meetings:
 
 | Question | How it is answered |
 |---|---|
@@ -204,7 +204,18 @@ Settings > AI provider. `KVOX_AI` is the packages' own `createKvoxAi` over `crea
 |---|---|---|
 | OpenAI | Pick the model, paste the API key and **Save & verify**; it is stored in the OS keychain. **Test** and **Re-check** ask OpenAI whether the key works; **Remove** forgets it | Available |
 | OpenAI-compatible | Set the base URL, model and wire style (Chat Completions or Responses), and a key (same card) unless the server takes none (then the page says "No key needed") | Available |
-| GitHub Copilot | A disabled, opt-in slot: decided "go, without Ask" (marinoscar/kvox#581); its models will report no tool calling. The runtime download, its egress proxy and its data folder are in place (marinoscar/kvox-desktop#23); the settings and adapter loading are marinoscar/kvox-desktop#21 | Adapter not wired yet |
+| GitHub Copilot | Off by default. An add-on beside the provider above, not a replacement: Settings > AI provider > GitHub Copilot shows what is sent to GitHub and asks for your consent, then you sign in with GitHub. Your own Copilot subscription pays | Available, opt-in. Notes, titles, knowledge extraction and the name check run on Copilot; Ask needs OpenAI (marinoscar/kvox#581) |
+
+GitHub Copilot (marinoscar/kvox-desktop#21) is loaded only while it is switched on. The consent is versioned (`COPILOT_CONSENT_VERSION`): a new text asks again, and a stored setting from before the adapter existed reads as off. While it is on, `routeKvoxTasks` gives each task to Copilot when Copilot can serve it and else to the primary provider when it is usable; what no provider can serve (Ask without an OpenAI key) is reported as `unavailableTasks`. The server may then also reach `COPILOT_EGRESS_HOSTS` (`api.githubcopilot.com`, `github.com`, `api.github.com`), and only while it is on. No GitHub token is ever held by KVox: the Copilot runtime keeps the sign-in, and KVox sees "signed in as <login>". Endpoints (all behind the launch token, in `src/server/desktop-ai.controller.ts`):
+
+| Endpoint | Does |
+|---|---|
+| `GET /api/desktop/ai/copilot/status` | `CopilotStatus` (enabled, signedIn, login, runtime state and progress, models, unavailableTasks) plus `allowedHosts` |
+| `PATCH /api/desktop/ai/copilot` | `Partial<CopilotSettings>`; switching on without the current consent is 409 `consent_required` |
+| `POST /api/desktop/ai/copilot/sign-in` | A `CopilotSignInChallenge` (open the address, or type the code) |
+| `POST /api/desktop/ai/copilot/sign-in/wait` | Long poll: answers the status once signed in; hanging up cancels the sign-in |
+| `POST /api/desktop/ai/copilot/sign-out` | Signs the runtime's account out |
+| `POST` / `DELETE /api/desktop/ai/copilot/runtime/download` | Starts (202) or cancels the opt-in runtime download; progress is in the status |
 
 The key block is the platform's `UserAiKeyCard` (`KeylessProviderCard` for a keyless server), the card KVox web shows. **Save & verify** and **Test** run on the local server, never in the window: `POST /api/desktop/ai/keys/:provider/test` calls the adapter's `verifyKey` (and `listModels` for the count) with the typed key, or the stored one when none is typed, and answers a verdict in the platform's `AiProbeResult` shape (HTTP 200; `success` is the answer). The key goes to the provider and nowhere else: not into the answer, an error or a log line. A key the provider rejects is not stored; a host the egress guard refuses (a provider other than the one saved in Settings) is a readable failed check, not a socket error.
 

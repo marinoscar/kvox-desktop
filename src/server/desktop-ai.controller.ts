@@ -1,8 +1,11 @@
-import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpException, Inject, Param, Patch, Post, Put, Query, Res } from '@nestjs/common';
+import type { FastifyReply } from 'fastify';
 
 import { CurrentKvoxPrincipal, KvoxAuth } from '@marinoscar/kvox-api/core';
 import { KVOX_AI, type KvoxAiPort, type KvoxPrincipal } from '@marinoscar/kvox-api/ports';
 
+import { CopilotSettingsSchema, type CopilotSignInChallenge, type CopilotStatus } from '@marinoscar/kvox-contract/copilot';
+import { CopilotConflictError } from './ai/copilot-service.js';
 import { DESKTOP_AI_PROVIDERS, needsKey, type DesktopAiSettings } from './ai/desktop-ai-settings.js';
 import { isSelectableProvider, type DesktopAi, type DesktopAiKeyStatus, type DesktopAiKeyTestResult } from './ai/desktop-ai.js';
 import type { EgressGuard } from './egress-guard.js';
@@ -31,8 +34,32 @@ import type { EgressGuard } from './egress-guard.js';
 //                                     host (egress) or a rejected key is a readable
 //                                     check, never the key.
 //
+// The GitHub Copilot add-on (marinoscar/kvox-desktop#21); every response is a
+// `CopilotStatus` plus the `allowedHosts` the egress guard allows now:
+//
+// GET    /desktop/ai/copilot/status           enabled, signedIn, login, runtime
+//                                             state, models, unavailable tasks.
+// PATCH  /desktop/ai/copilot                  `Partial<CopilotSettings>`; switching on
+//                                             needs the current consent (409
+//                                             `consent_required`).
+// POST   /desktop/ai/copilot/sign-in          a `CopilotSignInChallenge`.
+// POST   /desktop/ai/copilot/sign-in/wait     long-poll: resolves when signed in;
+//                                             abortable (the client hanging up
+//                                             cancels the flow).
+// POST   /desktop/ai/copilot/sign-out
+// POST   /desktop/ai/copilot/runtime/download starts the opt-in download (202);
+//                                             progress shows in the status.
+// DELETE /desktop/ai/copilot/runtime/download cancels it.
+// DELETE /desktop/ai/copilot/data             "Remove Copilot data" (`?includeRuntime=true`
+//                                             also removes the downloaded runtime); only
+//                                             with Copilot off (409 `copilot_enabled`).
+//
+// 409s: `runtime_not_ready`, `runtime_download_unavailable`, `copilot_disabled`,
+// `sign_in_not_started`, `consent_required`; a sign-in that ends signed out is
+// `AI_KEY_REQUIRED` with `details.signInReason`.
+//
 // Host glue (marinoscar/kvox#584): no AI policy lives here. ⚠ No response
-// carries a key.
+// carries a key or a token.
 // =============================================================================
 
 /** The injection token of the {@link DesktopAi} instance. */
@@ -46,7 +73,12 @@ export interface DesktopAiState {
   keyConfigured: boolean;
   models: Array<{ id: string; label: string }>;
   defaultModel: string | null;
+  /** Tasks no provider can serve now, each with the missing capability (Ask without an OpenAI key while Copilot is on). */
+  unavailableTasks: Array<{ task: string; reason: 'needs_tool_calling' | 'needs_embeddings' }>;
 }
+
+/** Every Copilot response: the status, and the hosts the egress guard allows now (for the footer). */
+export type DesktopCopilotStatus = CopilotStatus & { allowedHosts: string[] };
 
 /** `GET /desktop/ai/settings`. */
 export interface DesktopAiSettingsView {
@@ -55,6 +87,8 @@ export interface DesktopAiSettingsView {
     id: string;
     label: string;
     implemented: boolean;
+    /** False for an add-on (Copilot): not a choice of THE provider. */
+    primary: boolean;
     toolCalling: boolean;
     note: string;
     /** Whether calls need a stored key under the current settings (false for a keyless server). */
@@ -82,8 +116,9 @@ export class DesktopAiController {
     const models = modelState.models.map((model) => ({ id: model.id, label: model.label }));
     // A missing key is "configure it" (the notes page shows its key prompt), not "AI is off".
     const configured = capabilities.available || capabilities.reason === 'ai_key_missing';
-    if (!configured) return { available: false, keyConfigured: false, models: [], defaultModel: null };
-    return { available: true, keyConfigured: capabilities.available, models, defaultModel: modelState.policy.defaultModel };
+    const unavailableTasks = await this.desktopAi.unavailableTasks();
+    if (!configured) return { available: false, keyConfigured: false, models: [], defaultModel: null, unavailableTasks };
+    return { available: true, keyConfigured: capabilities.available, models, defaultModel: modelState.policy.defaultModel, unavailableTasks };
   }
 
   @Get('settings')
@@ -123,6 +158,95 @@ export class DesktopAiController {
     return this.desktopAi.testKey(provider, apiKey);
   }
 
+  // ---- GitHub Copilot ---------------------------------------------------------
+
+  @Get('copilot/status')
+  @KvoxAuth()
+  async copilotStatus(): Promise<DesktopCopilotStatus> {
+    return this.copilotView();
+  }
+
+  @Patch('copilot')
+  @KvoxAuth()
+  async copilotUpdate(@CurrentKvoxPrincipal() principal: KvoxPrincipal, @Body() body: unknown): Promise<DesktopCopilotStatus> {
+    const parsed = CopilotSettingsSchema.partial().strict().safeParse(body);
+    if (!parsed.success) {
+      throw new HttpException(
+        { code: 'ai_settings_invalid', message: parsed.error.issues.map((issue) => `${issue.path.map(String).join('.') || 'copilot'}: ${issue.message}`).join('; ') },
+        400,
+      );
+    }
+    await this.copilotCall(() => this.desktopAi.updateCopilot(parsed.data, principal.userId));
+    return this.copilotView();
+  }
+
+  @Post('copilot/sign-in')
+  @HttpCode(200)
+  @KvoxAuth()
+  async copilotSignIn(): Promise<CopilotSignInChallenge> {
+    return this.copilotCall(() => this.desktopAi.copilotSignInStart());
+  }
+
+  @Post('copilot/sign-in/wait')
+  @HttpCode(200)
+  @KvoxAuth()
+  async copilotSignInWait(@Res({ passthrough: true }) reply: FastifyReply): Promise<DesktopCopilotStatus> {
+    // A client that hangs up before the answer cancels the sign-in flow.
+    const aborted = new AbortController();
+    const onClose = () => {
+      if (!reply.raw.writableFinished) aborted.abort();
+    };
+    reply.raw.once('close', onClose);
+    try {
+      await this.copilotCall(() => this.desktopAi.copilotSignInWait(aborted.signal));
+    } finally {
+      reply.raw.off('close', onClose);
+    }
+    return this.copilotView();
+  }
+
+  @Post('copilot/sign-out')
+  @HttpCode(200)
+  @KvoxAuth()
+  async copilotSignOut(): Promise<DesktopCopilotStatus> {
+    await this.copilotCall(() => this.desktopAi.copilotSignOut());
+    return this.copilotView();
+  }
+
+  @Post('copilot/runtime/download')
+  @HttpCode(202)
+  @KvoxAuth()
+  async copilotRuntimeDownload(): Promise<DesktopCopilotStatus> {
+    await this.copilotCall(() => this.desktopAi.copilotStartDownload());
+    return this.copilotView();
+  }
+
+  @Delete('copilot/runtime/download')
+  @KvoxAuth()
+  async copilotRuntimeDownloadCancel(): Promise<DesktopCopilotStatus> {
+    await this.desktopAi.copilotCancelDownload();
+    return this.copilotView();
+  }
+
+  @Delete('copilot/data')
+  @KvoxAuth()
+  async copilotRemoveData(@Query('includeRuntime') includeRuntime?: string): Promise<{ removed: string[]; keptRuntime: boolean }> {
+    return this.copilotCall(() => this.desktopAi.copilotRemoveData(includeRuntime === 'true'));
+  }
+
+  private async copilotView(): Promise<DesktopCopilotStatus> {
+    return { ...(await this.desktopAi.copilotStatus()), allowedHosts: this.egress.allowedHosts };
+  }
+
+  /** Runs a Copilot operation and answers its failures as the endpoint's HTTP errors (messages redacted). */
+  private async copilotCall<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      throw await copilotHttpError(error);
+    }
+  }
+
   private async view(settings: DesktopAiSettings): Promise<DesktopAiSettingsView> {
     const providers = await Promise.all(
       DESKTOP_AI_PROVIDERS.map(async (slot) => {
@@ -133,4 +257,24 @@ export class DesktopAiController {
     );
     return { settings, providers, allowedHosts: this.egress.allowedHosts };
   }
+}
+
+/** An error of a Copilot operation as the HTTP error the endpoint answers (`HttpException` passes through). */
+async function copilotHttpError(error: unknown): Promise<HttpException> {
+  if (error instanceof HttpException) return error;
+  if (error instanceof CopilotConflictError) return new HttpException({ code: error.code, message: error.message }, 409);
+  const { redactTokens } = await import('@marinoscar/kvox-ai/copilot');
+  const body = (error as { getResponse?: () => { code?: unknown; message?: unknown; details?: unknown } } | null)?.getResponse?.();
+  if (body && typeof body.code === 'string' && typeof (error as { getStatus?: unknown }).getStatus === 'function') {
+    const code = body.code;
+    // A sign-in that ends signed out is a 409 (it is the user's state to fix), not the platform's 403.
+    const status = code === 'AI_KEY_REQUIRED' ? 409 : (error as { getStatus(): number }).getStatus();
+    return new HttpException(
+      { code, message: redactTokens(String(body.message ?? 'GitHub Copilot failed.')), ...(body.details !== undefined ? { details: body.details } : {}) },
+      status,
+    );
+  }
+  // Anything else is the runtime failing: say so, without its text if it could carry a token.
+  const message = error instanceof Error ? redactTokens(error.message) : 'GitHub Copilot failed.';
+  return new HttpException({ code: 'AI_PROVIDER_UNAVAILABLE', message }, 503);
 }

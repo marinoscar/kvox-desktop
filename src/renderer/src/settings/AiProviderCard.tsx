@@ -54,7 +54,7 @@ interface KeyStatus {
 
 interface SettingsView {
   settings: AiSettings;
-  providers: Array<{ id: string; label: string; implemented: boolean; toolCalling: boolean; note: string; needsKey: boolean; key: KeyStatus | null }>;
+  providers: Array<{ id: string; label: string; implemented: boolean; primary: boolean; toolCalling: boolean; note: string; needsKey: boolean; key: KeyStatus | null }>;
   allowedHosts: string[];
 }
 
@@ -182,7 +182,8 @@ export function AiProviderCard() {
           onChange={(event) => setDraft({ ...draft, provider: event.target.value === 'off' ? null : (event.target.value as ProviderId) })}
         >
           {view.providers
-            .filter((provider) => provider.implemented)
+            // An add-on (Copilot) is not a choice of THE provider: it has its own switch.
+            .filter((provider) => provider.implemented && provider.primary)
             .map((provider) => (
               <FormControlLabel key={provider.id} value={provider.id} control={<Radio />} label={provider.label} />
             ))}
