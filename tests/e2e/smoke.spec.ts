@@ -121,16 +121,55 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   }
   const developerRoles = ['reload', 'forcereload', 'toggledevtools'].map((role) => menuInfo.roles.map((r) => r.toLowerCase()).includes(role));
   expect(developerRoles, 'Reload and Developer Tools exist only while unpackaged').toEqual([!menuInfo.isPackaged, !menuInfo.isPackaged, !menuInfo.isPackaged]);
+  // ---- The KVox theme (marinoscar/kvox-desktop#17) ---------------------------------
+  // The look is @marinoscar/kvox-web/brand's through ShellRoot; the values below are the issue's. Pixels are
+  // asserted as computed styles (a screenshot baseline would be a per-OS binary), and the screenshots are
+  // attached to the report for the eye.
+  const DARK_GROUND = 'rgb(15, 17, 23)';
+  const LIGHT_GROUND = 'rgb(246, 247, 251)';
   const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-  // MUI's `data` selector marks <html> with data-light or data-dark.
-  const scheme = () => page.evaluate(() => (document.documentElement.hasAttribute('data-dark') ? 'dark' : 'light'));
-  const schemeBefore = await scheme();
-  const backgroundBefore = await background();
+  const windowBackground = () => first.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBackgroundColor().toLowerCase());
+  const chooseTheme = async (label: 'Light' | 'Dark' | 'System') => {
+    await page.getByRole('button', { name: /^Theme:/ }).click();
+    await page.getByRole('menuitem', { name: label }).click();
+  };
+  const attachScreenshot = async (name: string) =>
+    test.info().attach(name, { body: await page.screenshot(), contentType: 'image/png' });
+
+  // Inter, from the app bundle; sentence-case buttons; the primary indigo.
+  expect(await page.evaluate(() => getComputedStyle(document.body).fontFamily)).toMatch(/^"?Inter"?,/);
+  expect(await page.evaluate(() => document.fonts.load('16px Inter').then(() => document.fonts.check('16px Inter')))).toBe(true);
+  const newNote = page.getByRole('button', { name: 'New note' }).filter({ visible: true }).first();
+  expect(await newNote.evaluate((el) => getComputedStyle(el).textTransform)).toBe('none');
+
+  // System follows the OS.
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect.poll(background).toBe(LIGHT_GROUND);
+  // (MUI buttons transition their colours, so these are polled.)
+  await expect.poll(() => newNote.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(79, 70, 229)');
+  await attachScreenshot('notes-light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect.poll(background).toBe(DARK_GROUND);
+  await expect
+    .poll(() => newNote.evaluate((el) => [getComputedStyle(el).backgroundColor, getComputedStyle(el).color]))
+    .toEqual(['rgb(165, 180, 252)', DARK_GROUND]);
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect.poll(background).toBe(LIGHT_GROUND);
+
+  // The application menu's Toggle light/dark goes through ShellRoot (light -> dark -> light), and the
+  // window's own background follows the page.
   await clickMenuItem('Toggle light/dark');
-  await expect.poll(scheme).not.toBe(schemeBefore);
-  expect(await background(), 'the page colours changed with the scheme').not.toBe(backgroundBefore);
+  await expect.poll(background).toBe(DARK_GROUND);
+  await expect.poll(windowBackground).toBe('#0f1117');
   await clickMenuItem('Toggle light/dark');
-  await expect.poll(scheme).toBe(schemeBefore);
+  await expect.poll(background).toBe(LIGHT_GROUND);
+  await expect.poll(windowBackground).toBe('#f6f7fb');
+
+  // The app bar's temporary button: explicit modes, then back to the OS.
+  await chooseTheme('Dark');
+  await expect.poll(background).toBe(DARK_GROUND);
+  await chooseTheme('System');
+  await expect.poll(background).toBe(LIGHT_GROUND);
   await clickMenuItem('New note');
   await page.waitForURL(/#\/notes\/new$/);
   await expect(page.getByRole('heading', { name: 'New note' })).toBeVisible();
@@ -182,11 +221,40 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   const noteId = /#\/notes\/([0-9a-f-]{36})$/.exec(page.url())![1];
   await expect(page.getByText('Desktop smoke marker: zebracorn.')).toBeVisible();
   await expect(page.getByRole('heading', { level: 1 }).first()).not.toHaveText('');
+  // ---- Dark: the card, and the choice that has to survive the restart -----------------
+  await page.getByRole('link', { name: 'Notes' }).click();
+  await chooseTheme('Dark');
+  await expect.poll(background).toBe(DARK_GROUND);
+  await attachScreenshot('notes-dark');
+  await page.getByRole('link', { name: 'Settings' }).click();
+  const card = page.locator('.MuiCard-root').first();
+  await expect(card).toBeVisible();
+  expect(
+    await card.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return { backgroundColor: style.backgroundColor, borderTopWidth: style.borderTopWidth, boxShadow: style.boxShadow };
+    }),
+  ).toEqual({
+    backgroundColor: 'rgb(23, 26, 35)',
+    borderTopWidth: '1px',
+    boxShadow: 'none',
+  });
+  await attachScreenshot('settings-dark');
+  await page.getByRole('link', { name: 'Notes' }).click();
+  // The shell keeps a copy in settings.json, which is what paints the window before the page exists.
+  await expect
+    .poll(() => (JSON.parse(readFileSync(join(userDataDir, 'settings.json'), 'utf8')) as { themeMode?: string }).themeMode)
+    .toBe('dark');
   metrics.coldIdleMemoryMb = await idleMemory(first.app);
   await first.app.close();
 
   // ---- Second launch: same data folder ---------------------------------------
   const second = await launch('warm');
+  // The dark choice survived the restart: the page paints in it and the window was created in it.
+  await expect.poll(() => second.page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(15, 17, 23)');
+  expect(await second.page.evaluate(() => localStorage.getItem('theme_mode'))).toBe('dark');
+  expect(await second.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBackgroundColor().toLowerCase())).toBe('#0f1117');
+  test.info().attach('notes-dark-after-restart', { body: await second.page.screenshot(), contentType: 'image/png' });
   // The library lists the note with its generated body; opening it shows the note. (Not by the title read in
   // the first run: the heading shows the template's name until the generated title replaces it.)
   await second.page.getByRole('button').filter({ hasText: 'Desktop smoke marker: zebracorn.' }).first().click();

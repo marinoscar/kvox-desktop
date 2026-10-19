@@ -238,8 +238,9 @@ describe('application icons', () => {
   });
 
   const mark = resolveMark();
-  // Until the installed @marinoscar/kvox-web exports the brand assets (marinoscar/kvox#628) there
-  // is no source to compare with; `npm run icons -- --check` says so and fails.
+  // The installed @marinoscar/kvox-web exports the brand assets since 0.1.0-next.3 (marinoscar/kvox#628), so
+  // this runs; a package without the mark (`mark === null`) has nothing to compare with, and
+  // `npm run icons -- --check` (CI) says so and fails instead.
   // Compared byte for byte on Linux only: the committed files were rasterized there, and CI's Windows
   // runner is not asked to reproduce a native rasterizer's output bit for bit.
   it.skipIf(mark === null || process.platform !== 'linux')('the committed icons match a regeneration from @marinoscar/kvox-web/brand', () => {
