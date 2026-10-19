@@ -2,9 +2,9 @@ import { randomBytes } from 'node:crypto';
 import { join, normalize, relative, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { BrowserWindow, Notification, app, dialog, ipcMain, net, protocol, session, utilityProcess, type UtilityProcess } from 'electron';
+import { BrowserWindow, Notification, app, dialog, ipcMain, nativeTheme, net, protocol, session, utilityProcess, type UtilityProcess } from 'electron';
 
-import type { DesktopConnection, FromServer, ToServer } from '../shared/protocol';
+import { parseThemeMode, type DesktopConnection, type FromServer, type ThemeMode, type ToServer } from '../shared/protocol';
 import { windowIconPath } from './app-icon';
 import { installApplicationMenu } from './menu';
 import { runNodeScript } from './node-scripts';
@@ -12,6 +12,7 @@ import { registerImportIpc } from './import';
 import { runSecretOp, secretStorageStatus } from './secret-storage';
 import { readShellSettings, writeShellSettings } from './shell-settings';
 import { DesktopUpdates } from './updates';
+import { windowBackground } from './window-background';
 
 // =============================================================================
 // The Electron main process of KVox Desktop (marinoscar/kvox#582)
@@ -240,17 +241,42 @@ function registerShellIpc(): void {
     log(`secrets: plaintext storage ${settings.secrets.allowPlaintext ? 'accepted' : 'withdrawn'} by the user`);
     return secretStorageStatus(settingsPath());
   });
+  ipcMain.handle('kvox:theme-mode', () => readShellSettings(settingsPath()).themeMode);
+  ipcMain.handle('kvox:set-theme-mode', (_event, value: unknown) => {
+    const mode = parseThemeMode(value);
+    if (mode === null) return;
+    const settings = readShellSettings(settingsPath());
+    if (settings.themeMode !== mode) {
+      settings.themeMode = mode;
+      writeShellSettings(settingsPath(), settings);
+    }
+    applyThemeMode(mode);
+  });
   ipcMain.handle('kvox:updates', () => updates.status());
   ipcMain.handle('kvox:set-updates-enabled', (_event, enabled: unknown) => updates.setEnabled(enabled === true));
   ipcMain.handle('kvox:install-update', () => updates.installNow());
 }
 
+/**
+ * Makes the native side follow the page's theme choice: Chromium's own `prefers-color-scheme`, scroll bars
+ * and native menus follow it, and the window's background (what shows while a page repaints, on a resize
+ * or before the first paint) is the brand's page ground for that mode.
+ */
+function applyThemeMode(mode: ThemeMode): void {
+  nativeTheme.themeSource = mode;
+  mainWindow?.setBackgroundColor(windowBackground(mode, nativeTheme.shouldUseDarkColors));
+}
+
 function createWindow(): void {
+  // The saved choice decides the colour of the window before any page exists (no white flash in dark mode).
+  const themeMode = readShellSettings(settingsPath()).themeMode;
+  nativeTheme.themeSource = themeMode;
   const window = new BrowserWindow({
     width: 1280,
     height: 860,
     show: false,
     title: 'KVox',
+    backgroundColor: windowBackground(themeMode, nativeTheme.shouldUseDarkColors),
     // Linux and Windows show this in the taskbar and the switcher (undefined on macOS: the bundle's .icns).
     icon: windowIconPath({ platform: process.platform, isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() }),
     webPreferences: {
@@ -263,6 +289,11 @@ function createWindow(): void {
     },
   });
   mainWindow = window;
+  // In `system` mode the OS can change while the app runs: keep the window's background with it.
+  const repaintBackground = (): void =>
+    window.setBackgroundColor(windowBackground(readShellSettings(settingsPath()).themeMode, nativeTheme.shouldUseDarkColors));
+  nativeTheme.on('updated', repaintBackground);
+  window.once('closed', () => nativeTheme.off('updated', repaintBackground));
   window.once('ready-to-show', () => {
     log(`window ready after ${Math.round(performance.now() - launchedAt)} ms since launch`);
     window.show();

@@ -2,12 +2,14 @@
   // The main process, the preload script and the server utility process.
   // skipLibCheck is OFF on purpose, as in the bare host: the packages' own .d.ts
   // files are checked, so a declaration naming an optional peer this app does
-  // not install fails here. `emscripten` is PGlite's global types.
+  // not install fails here. `emscripten` is PGlite's global types. `jsx` is for
+// tests/unit/theme.test.ts, which renders the renderer's theme root on the server.
   "compilerOptions": {
     "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
+    "jsx": "react-jsx",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "esModuleInterop": true,

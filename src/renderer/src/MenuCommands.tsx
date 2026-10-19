@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useColorScheme } from '@mui/material/styles';
+
+import { useShellTheme } from '@marinoscar/platform-web/shell/headless';
 
 import { parseMenuPath } from '../../shared/protocol';
 import { useImport } from './import/ImportProvider';
@@ -10,13 +11,12 @@ import { useImport } from './import/ImportProvider';
 // provider and the theme, validates and runs them. It renders nothing.
 //
 //   navigate      an in-app path, accepted only as `parseMenuPath` allows
-//   toggle theme  light <-> dark (the resolved scheme when the mode is "system")
+//   toggle theme  light <-> dark: ShellRoot's `toggleMode` (the resolved scheme when the mode is "system")
 //   import        the same dialog as the "Import…" action
 export function MenuCommands(): null {
   const navigate = useNavigate();
   const { chooseAndImport } = useImport();
-  const { mode, systemMode, setMode } = useColorScheme();
-  const current = mode === 'system' ? systemMode : mode;
+  const { toggleMode } = useShellTheme();
 
   useEffect(() => {
     const bridge = window.kvoxDesktop;
@@ -28,10 +28,7 @@ export function MenuCommands(): null {
 
   useEffect(() => window.kvoxDesktop.onMenuImport(() => chooseAndImport()), [chooseAndImport]);
 
-  useEffect(
-    () => window.kvoxDesktop.onMenuToggleTheme(() => setMode(current === 'dark' ? 'light' : 'dark')),
-    [current, setMode],
-  );
+  useEffect(() => window.kvoxDesktop.onMenuToggleTheme(() => toggleMode()), [toggleMode]);
 
   return null;
 }

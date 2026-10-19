@@ -82,6 +82,17 @@ export type ImportOutcome =
   | { ok: true; kind: 'note' | 'transcript' | 'document'; id: string; title: string; filename: string }
   | { ok: false; filename: string; message: string; reason?: string; status?: number };
 
+/** The theme choice: a mode, or `system` to follow the OS (the shell's `ShellThemeMode`, restricted to the built-in three). */
+export type ThemeMode = 'light' | 'dark' | 'system';
+
+/** Every {@link ThemeMode}. */
+export const THEME_MODES: readonly ThemeMode[] = ['light', 'dark', 'system'];
+
+/** `value` when it is a {@link ThemeMode}, else `null` (what crosses IPC is validated on both sides). */
+export function parseThemeMode(value: unknown): ThemeMode | null {
+  return typeof value === 'string' && (THEME_MODES as readonly string[]).includes(value) ? (value as ThemeMode) : null;
+}
+
 /**
  * The channels the application menu (`src/main/menu.ts`) sends to the window
  * (marinoscar/kvox-desktop#20). The page never sends on them.
@@ -128,6 +139,10 @@ export interface KvoxDesktopBridge {
   importFromDialog(): Promise<ImportOutcome[] | null>;
   /** Imports files dropped on the window (their paths are read in the preload). */
   importDropped(files: readonly File[]): Promise<ImportOutcome[]>;
+  /** The theme choice kept by the shell (`<userData>/settings.json`); `system` until one is made. */
+  themeMode(): Promise<ThemeMode>;
+  /** Tells the shell the choice the page made, so the next launch paints the right window colour. */
+  setThemeMode(mode: ThemeMode): Promise<void>;
   /** The application menu asked to open an in-app path (validate it with `parseMenuPath`); returns the unsubscribe. */
   onMenuNavigate(handler: (path: unknown) => void): () => void;
   /** The application menu asked to switch the theme; returns the unsubscribe. */

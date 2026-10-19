@@ -1,19 +1,18 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import type { KvoxDesktopBridge } from '../../shared/protocol';
-import { App } from './App';
+// The Inter @font-face, self-hosted by the brand package: electron-vite emits the woff2 into the bundle
+// (CSP `font-src 'self' data:` unchanged; no CDN, ADR-0004).
+import '@marinoscar/kvox-web/brand/fonts/inter.css';
 
-declare global {
-  interface Window {
-    kvoxDesktop: KvoxDesktopBridge;
-  }
-}
+import { App } from './App';
+import { restoreThemeMode } from './theme';
 
 const root = createRoot(document.getElementById('root')!);
 
-window.kvoxDesktop
-  .connection()
+// The saved theme choice is back in localStorage (if it was lost) before ShellRoot reads it.
+restoreThemeMode(window.kvoxDesktop)
+  .then(() => window.kvoxDesktop.connection())
   .then((connection) => {
     root.render(
       <StrictMode>
