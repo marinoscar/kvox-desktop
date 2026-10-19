@@ -167,6 +167,15 @@ Host duties Desktop carries for the graph:
 
 Restore and "Store keys without system encryption" ask for a typed confirmation (the platform's `TypedConfirmDialog`: tick the box and type `RESTORE`, or `PLAINTEXT KEYS`). A new page is a card in the registry and a route, appended at the end; `tests/unit/settings-hub.test.tsx` fails when one has no counterpart.
 
+## Look and feel
+
+KVox Desktop looks like KVox web because it uses the same code for it, and defines none of it. The theme is `createKvoxTheme('light' | 'dark')` of `@marinoscar/kvox-web/brand` (the indigo and amber palette, dark `#0f1117` ground and `#171a23` cards with a 1px divider border, sentence-case buttons), applied by the platform's `ShellRoot` (`@marinoscar/platform-web/shell/ui`, wrapped by `DesktopThemeRoot` in `src/renderer/src/theme.tsx`). The Inter font is `@marinoscar/kvox-web/brand/fonts/inter.css`, imported in `main.tsx`: electron-vite emits the woff2 into the app bundle, so no request is made and the CSP (`font-src 'self' data:`) is unchanged (ADR-0004). The app icons come from the package's `mark.svg` too (Packaging, below).
+
+- **Light, dark or system.** The choice is `ShellRoot`'s (`useShellTheme`, default `system`). A temporary button in the app bar sets it, until the shared shell (#18) brings its own toggle, and so does **View > Toggle light/dark** of the application menu.
+- **It survives a restart.** `ShellRoot` keeps it in `localStorage` (`theme_mode`, stable because the page is always `kvox://app`). The main process needs it before any page exists, so the page also reports it and main keeps a copy as `themeMode` in `<userData>/settings.json`; that copy is the fallback when `localStorage` comes back empty.
+- **No white flash.** The `BrowserWindow` is created with `backgroundColor` set to the page ground of the saved mode (`kvoxTokens` of the brand package; `system` asks `nativeTheme`), and `nativeTheme.themeSource` follows the choice, so scroll bars and native menus match.
+- **Rule.** Nothing brand-related is defined in this repository: a colour, a font stack or a logo that is missing belongs in `@marinoscar/kvox-web/brand`. `tests/unit/theme.test.ts` fails on a `createTheme(` call or a colour literal in `src/renderer` or `src/main`; `tests/e2e/smoke.spec.ts` checks the computed colours, Inter, the persisted mode and the window colour in the packaged app, and attaches light and dark screenshots to the report.
+
 ## AI providers
 
 Settings > AI provider. `KVOX_AI` is the packages' own `createKvoxAi` over `createDirectRuntime` (`@marinoscar/kvox-ai`), with the OpenAI adapters of the lean `@marinoscar/platform-ai-providers` (marinoscar/kvox#578) and the key read from `KVOX_SECRETS` on every call (`src/server/ai/`).
@@ -187,7 +196,7 @@ The non-secret choices are the system settings namespace `desktopAi` (in the dat
 src/main/        Electron main process: window, kvox:// scheme, window egress guard, server lifecycle,
                  safeStorage and Notification for the server, backup dialogs, import (dialog, dropped files),
                  migration utility processes (node-scripts.ts), opt-in updates (updates.ts, update-policy.ts)
-src/preload/     Preload bridge (kvoxDesktop: connection, data folder, backup dialogs, secret storage, import, updates)
+src/preload/     Preload bridge (kvoxDesktop: connection, data folder, backup dialogs, secret storage, import, updates, theme mode)
 src/renderer/    React app: KvoxWebHost over loopback, kvox-web notes, graph and Ask screens (routes.tsx),
                  the settings hub, its registry and one page per card (settings/), the Import action and drop target (import/)
 src/server/      Utility process: Nest 11 + Fastify 5 on 127.0.0.1, PGlite, server egress guard,
@@ -319,7 +328,7 @@ Turning it off stops the timer and closes the session again. No user data is sen
   | GrantFileProtocolExtraPrivileges | off | The window is served from `kvox://` |
   | LoadBrowserProcessSpecificV8Snapshot | off | |
 
-- **Icons.** Every icon is generated from the KVox mark, never drawn or copied by hand: `npm run icons` reads `@marinoscar/kvox-web/brand/assets/mark.svg` from `node_modules` and rasterizes each size from the vector (`@resvg/resvg-js`, pinned; no network), writing `build/icon.ico` (16 to 256, seven sizes), `build/icon.icns` (16 to 1024 with the @2x entries), `build/linux/icon.png` (512) and `build/linux/icons/<n>x<n>.png` (16 to 512). `npm run icons -- --check` writes nothing and exits 1 when a committed icon differs from a regeneration (a changed `mark.svg` fails it until `npm run icons` is run again); `tests/unit/packaging.test.ts` runs the same comparison on Linux whenever the installed package carries the mark. `electron-builder.yml` points `win.icon`, the NSIS installer and uninstaller, `mac.icon` and `linux.icon` at them; the window icon (taskbar and switcher on Linux and Windows) is read from the resources folder when packaged and from `build/` in development (`src/main/app-icon.ts`).
+- **Icons.** Every icon is generated from the KVox mark, never drawn or copied by hand: `npm run icons` reads `@marinoscar/kvox-web/brand/assets/mark.svg` from `node_modules` and rasterizes each size from the vector (`@resvg/resvg-js`, pinned; no network), writing `build/icon.ico` (16 to 256, seven sizes), `build/icon.icns` (16 to 1024 with the @2x entries), `build/linux/icon.png` (512) and `build/linux/icons/<n>x<n>.png` (16 to 512). `npm run icons -- --check` writes nothing and exits 1 when a committed icon differs from a regeneration (a changed `mark.svg` fails it until `npm run icons` is run again); `tests/unit/packaging.test.ts` and the CI step "Icons match the brand mark" run the same comparison on Linux. `electron-builder.yml` points `win.icon`, the NSIS installer and uninstaller, `mac.icon` and `linux.icon` at them; the window icon (taskbar and switcher on Linux and Windows) is read from the resources folder when packaged and from `build/` in development (`src/main/app-icon.ts`).
 - **Application menu** (`src/main/menu.ts`). KVox's own, not Electron's default: File (New note, Import…, Settings, Quit), Edit, View (Toggle light/dark, zoom, full screen), Window and Help (About KVox with the Electron, Chromium, Node and `@marinoscar/*` versions, Open data folder, View licences, which opens the bundled `LICENSE.txt`). Reload and Developer Tools exist only when `!app.isPackaged`. No item opens a remote URL ([ADR-0004](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0004-desktop-data-local-only.md)); `tests/unit/menu.test.ts` walks the template for one. The menu sends the window `menu:navigate`, `menu:toggle-theme` and `menu:import` (`src/shared/protocol.ts`); the renderer validates the path (`parseMenuPath`) and acts (`src/renderer/src/MenuCommands.tsx`).
 - **macOS**: hardened runtime; one entitlement, `com.apple.security.cs.allow-jit` (V8 compiles JavaScript and WebAssembly, PGlite included, at run time). Not granted: unsigned executable memory, disabled library validation.
 - **Windows**: per-user NSIS (no admin), x64 and arm64 in one installer; the Prisma schema engine is x64 and runs emulated on arm64.
@@ -357,12 +366,21 @@ Then: tag `v0.0.2-rc.1`, check the draft; tag `v0.0.2-rc.2` with the update sett
 
 ## Package versions
 
-Pin the `@marinoscar/kvox-*` packages to exact versions and bump them together; they are one release group. `@marinoscar/platform-db` is pinned to `0.1.0-next.5`, the version `@marinoscar/kvox-db` was tested with.
+Pin the `@marinoscar/kvox-*` packages to exact versions and bump them together; they are one release group. The `@marinoscar/platform-*` packages are pinned exactly too, each at the version the kvox release was tested with.
 
-**The kvox packages come from npm.** `package.json` pins `@marinoscar/kvox-ai`, `-api`, `-contract`, `-db` and `-web` to one exact version (`0.1.0-next.0`, published with provenance on the `next` dist-tag). Bump all five together:
+| Package | Version | Used for |
+|---|---|---|
+| `@marinoscar/kvox-ai`, `-api`, `-contract`, `-db` | `0.1.0-next.3` | The domain: AI harness, API slices, wire schemas, schema and migrations |
+| `@marinoscar/kvox-web` | `0.1.0-next.3` | The screens, and `./brand`: theme, Inter, tokens, icon mark |
+| `@marinoscar/platform-web` | `0.1.0-next.7` | `ShellRoot` (theme mode), `SettingsHub`, the shared AI key cards |
+| `@marinoscar/platform-db` | `0.1.0-next.6` | Platform schema and migrations |
+| `@marinoscar/platform-ai-providers` | `0.1.0-next.6` | The OpenAI adapters |
+
+`@marinoscar/kvox-web@0.1.0-next.3` peers on `@marinoscar/platform-web@0.1.0-next.6` exactly, so `package.json` has an `overrides` entry that keeps one copy at `0.1.0-next.7`; drop it when kvox-web's peer moves. All the kvox packages come from npm (published with provenance on the `next` dist-tag). Bump the five together:
 
 ```bash
 npm install --save-exact @marinoscar/kvox-ai@<v> @marinoscar/kvox-api@<v> @marinoscar/kvox-contract@<v> @marinoscar/kvox-db@<v> @marinoscar/kvox-web@<v>
+npm run icons -- --check   # the icons still match the package's mark.svg; `npm run icons` rewrites them
 ```
 
 The release procedure is `docs/runbooks/release-kvox-packages.md` in marinoscar/kvox.
