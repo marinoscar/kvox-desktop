@@ -2,12 +2,13 @@ import { randomBytes } from 'node:crypto';
 import { join, normalize, relative, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { BrowserWindow, Notification, app, dialog, ipcMain, nativeTheme, net, protocol, session, utilityProcess, type UtilityProcess } from 'electron';
+import { BrowserWindow, Notification, app, dialog, ipcMain, nativeTheme, net, protocol, session, shell, utilityProcess, type UtilityProcess } from 'electron';
 
 import { parseThemeMode, type DesktopConnection, type FromServer, type ThemeMode, type ToServer } from '../shared/protocol';
 import { windowIconPath } from './app-icon';
 import { installApplicationMenu } from './menu';
 import { runNodeScript } from './node-scripts';
+import { openExternalChecked } from './open-external';
 import { registerImportIpc } from './import';
 import { runSecretOp, secretStorageStatus } from './secret-storage';
 import { readShellSettings, writeShellSettings } from './shell-settings';
@@ -255,6 +256,12 @@ function registerShellIpc(): void {
   ipcMain.handle('kvox:updates', () => updates.status());
   ipcMain.handle('kvox:set-updates-enabled', (_event, enabled: unknown) => updates.setEnabled(enabled === true));
   ipcMain.handle('kvox:install-update', () => updates.installNow());
+  // The Copilot card's links (device verification, terms): github.com over https only.
+  ipcMain.handle('kvox:open-external', async (_event, url: unknown) => {
+    const opened = await openExternalChecked(url, (checked) => shell.openExternal(checked));
+    if (!opened) log('shell: refused to open an external address that is not https://github.com/');
+    return opened;
+  });
 }
 
 /**
