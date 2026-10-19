@@ -14,7 +14,9 @@ import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 
-import { useKvoxHost } from '@marinoscar/kvox-web/core/headless';
+import { KvoxApiError, useKvoxHost } from '@marinoscar/kvox-web/core/headless';
+import type { AiProbeResult, UserAiKey } from '@marinoscar/platform-web/ai/headless';
+import { KeylessProviderCard, UserAiKeyCard } from '@marinoscar/platform-web/ai/ui';
 
 // =============================================================================
 // "AI provider": which provider runs the AI calls, its model and its key
@@ -22,10 +24,15 @@ import { useKvoxHost } from '@marinoscar/kvox-web/core/headless';
 //
 // Reads and writes `/api/desktop/ai/settings` (non-secret settings) and
 // `/api/desktop/ai/keys/:provider` (the key, stored by the server in the OS
-// keychain through KVOX_SECRETS). The key field is write-only: the server
-// answers a status (saved or not, the last four characters, when), never the key,
-// and the field is cleared once it is saved. The GitHub Copilot slot is shown
-// disabled until its adapter exists (marinoscar/kvox#581). Changing the
+// keychain through KVOX_SECRETS). The key block is the platform's own
+// `UserAiKeyCard` (the card KVox web shows: Save & verify, Test, Re-check,
+// Remove) or, for a keyless server, its `KeylessProviderCard`; this file only
+// binds them to the server (marinoscar/kvox-desktop#19). The key field is
+// write-only: the server answers a status (saved or not, the last four
+// characters, when), never the key, and the card clears the field once it is
+// saved. Testing a key is `POST /api/desktop/ai/keys/:provider/test`, answered
+// by the server through the adapter's `verifyKey`. The GitHub Copilot slot is
+// shown disabled until its adapter exists (marinoscar/kvox#581). Changing the
 // provider changes the one host the app may reach, shown below the form
 // (marinoscar/kvox#584).
 // =============================================================================
@@ -51,6 +58,14 @@ interface SettingsView {
   allowedHosts: string[];
 }
 
+/** What the last test of a key found; the server keeps no such record, so it lives for this visit. */
+interface KeyCheck {
+  verifiedAt: string | null;
+  lastErrorCode: string | null;
+  modelCount: number;
+  checkedAt: string;
+}
+
 type Outcome = { severity: 'success' | 'error'; text: string };
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -59,7 +74,7 @@ export function AiProviderCard() {
   const host = useKvoxHost();
   const [view, setView] = useState<SettingsView | null>(null);
   const [draft, setDraft] = useState<AiSettings | null>(null);
-  const [apiKey, setApiKey] = useState('');
+  const [checks, setChecks] = useState<Record<string, KeyCheck>>({});
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
 
@@ -94,6 +109,7 @@ export function AiProviderCard() {
   const compatible = draft.openaiCompatible;
   const keyNeeded = active === 'openai' || (active === 'openai-compatible' && compatible.requiresKey);
   const savedKey = slot?.key ?? null;
+  const saved = active !== null && view.settings.provider === active;
 
   const saveSettings = () =>
     run(async () => {
@@ -102,20 +118,59 @@ export function AiProviderCard() {
       setDraft(next.settings);
     }, 'AI settings saved.');
 
-  const saveKey = () =>
-    run(async () => {
-      if (!active) return;
-      await host.http.request<KeyStatus>('PUT', `/desktop/ai/keys/${active}`, { body: { apiKey } });
-      setApiKey('');
-      await load();
-    }, 'API key saved in the system keychain.');
+  // ---- The key card's bindings: the server holds the key; nothing comes back but a status ----
 
-  const removeKey = () =>
-    run(async () => {
-      if (!active) return;
-      await host.http.request<KeyStatus>('DELETE', `/desktop/ai/keys/${active}`);
-      await load();
-    }, 'API key removed.');
+  const remember = (provider: string, result: AiProbeResult) =>
+    setChecks((current) => ({
+      ...current,
+      [provider]: {
+        verifiedAt: result.success ? result.attemptedAt : null,
+        lastErrorCode: result.success ? null : (result.checks.find((check) => check.status === 'failed')?.code ?? null),
+        modelCount: result.modelCount ?? 0,
+        checkedAt: result.attemptedAt,
+      },
+    }));
+
+  const testKey = async (provider: string, typedKey?: string): Promise<AiProbeResult> => {
+    const result = await host.http.request<AiProbeResult>('POST', `/desktop/ai/keys/${provider}/test`, {
+      body: typedKey === undefined ? {} : { apiKey: typedKey },
+    });
+    // A typed key is not stored yet: only a stored key's result describes the saved status.
+    if (result.usedStoredKey) remember(provider, result);
+    return result;
+  };
+
+  // Save & verify: the provider must not reject the key (then nothing is stored). Any other
+  // failure (offline, a gateway with no model list) still saves it and says it is unverified.
+  const saveKey = async (provider: string, typedKey: string) => {
+    const probe = await host.http.request<AiProbeResult>('POST', `/desktop/ai/keys/${provider}/test`, { body: { apiKey: typedKey } });
+    const failure = probe.checks.find((check) => check.status === 'failed');
+    if (failure?.code === 'AI_KEY_INVALID') throw new KvoxApiError('The provider rejected this key.', 400, 'BAD_REQUEST', { reason: 'AI_KEY_INVALID' });
+    const status = await host.http.request<KeyStatus>('PUT', `/desktop/ai/keys/${provider}`, { body: { apiKey: typedKey } });
+    remember(provider, probe);
+    await load();
+    if (failure) throw new Error(`The key was saved, but it could not be verified: ${failure.detail || 'the provider did not answer.'}`);
+    return keyView(provider, status);
+  };
+
+  const removeKey = async (provider: string) => {
+    await host.http.request<KeyStatus>('DELETE', `/desktop/ai/keys/${provider}`);
+    setChecks(({ [provider]: _removed, ...rest }) => rest);
+    await load();
+  };
+
+  const keyView = (provider: string, status: KeyStatus): UserAiKey => {
+    const check = checks[provider];
+    return {
+      provider,
+      configured: status.configured,
+      hint: status.hint,
+      verifiedAt: check?.verifiedAt ?? null,
+      lastErrorCode: check?.lastErrorCode ?? null,
+      reachableModelCount: check?.modelCount ?? 0,
+      reachableCheckedAt: check?.checkedAt ?? null,
+    };
+  };
 
   return (
     <Stack spacing={2}>
@@ -190,33 +245,22 @@ export function AiProviderCard() {
         </Button>
       </Stack>
 
-      {keyNeeded && view.settings.provider === active && (
-        <Stack spacing={1}>
-          <Typography variant="body2" role="status" aria-label="API key status">
-            {savedKey?.configured
-              ? `A key is saved${savedKey.hint ? ` (${savedKey.hint})` : ''}${savedKey.updatedAt ? `, updated ${new Date(savedKey.updatedAt).toLocaleString()}` : ''}.`
-              : 'No API key is saved.'}
-          </Typography>
-          <Stack direction="row" spacing={1}>
-            <TextField
-              label="API key"
-              type="password"
-              size="small"
-              autoComplete="off"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              sx={{ flexGrow: 1 }}
-            />
-            <Button variant="outlined" onClick={() => void saveKey()} disabled={busy || apiKey === ''}>
-              Save key
-            </Button>
-            <Button color="warning" onClick={() => void removeKey()} disabled={busy || !savedKey?.configured}>
-              Remove key
-            </Button>
-          </Stack>
-        </Stack>
+      {/* The key: only for the saved provider, so the card never tests a host the egress guard has not been told about. */}
+      {saved && slot && keyNeeded && (
+        <UserAiKeyCard
+          provider={{ id: slot.id, displayName: slot.label, hasOrgKey: false }}
+          keyView={keyView(slot.id, savedKey ?? { configured: false, hint: null, updatedAt: null })}
+          orgFallback={false}
+          onSave={saveKey}
+          onTest={testKey}
+          onRemove={removeKey}
+        />
+      )}
+      {saved && slot && active === 'openai-compatible' && !keyNeeded && (
+        <KeylessProviderCard provider={{ id: slot.id, displayName: slot.label }} />
       )}
 
+      {/* COPILOT SLOT: the Copilot epic replaces the disabled block below with its own card. */}
       {copilot && (
         <Stack spacing={0.5}>
           <FormControlLabel control={<Switch checked={false} disabled />} label={`${copilot.label} (opt-in)`} />

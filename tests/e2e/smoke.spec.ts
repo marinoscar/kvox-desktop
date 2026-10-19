@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
-import { MOCK_NOTE_TEXT, configureAiProvider } from '../support/configure-ai';
+import { MOCK_NOTE_TEXT, configureAiProvider, openSettingsCard } from '../support/configure-ai';
 import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
 
 // =============================================================================
@@ -86,15 +86,33 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   const first = await launch('cold');
   const { page } = first;
 
-  // ---- Settings: the provider, its model, its key ------------------------------
+  // ---- Settings: the hub of five cards, then the provider, its model, its key ----
   await page.getByRole('link', { name: 'Settings' }).click();
+  await expect(page.getByRole('heading', { name: 'Settings', level: 4 })).toBeVisible();
+  for (const title of ['AI provider', 'Connected knowledge', 'Note Templates', 'Data and privacy', 'Updates']) {
+    await expect(page.getByRole('button', { name: new RegExp(`^${title}`) })).toBeVisible();
+  }
+  // Templates is a card of the hub, not a top-bar entry.
+  await expect(page.getByRole('link', { name: 'Templates' })).toHaveCount(0);
+  await page.getByRole('button', { name: /^Note Templates/ }).click();
+  await expect(page.getByRole('heading', { name: 'Note Templates', level: 1 })).toBeVisible();
+  await page.getByRole('link', { name: 'Settings' }).first().click();
+  await page.getByRole('button', { name: /^AI provider/ }).click();
+  await expect(page.getByRole('heading', { name: 'AI provider', level: 1 })).toBeVisible();
   await expect(page.getByText('KVox may connect only to: api.openai.com')).toBeVisible();
   await expect(page.getByLabel(/GitHub Copilot/)).toBeDisabled();
   await configureAiProvider(page, { baseUrl: provider!.baseUrl, apiKey: PLANTED_KEY });
-  await page.getByRole('link', { name: 'Settings' }).click();
+  await openSettingsCard(page, 'AI provider');
   await expect(page.getByText('KVox connects to nothing outside this device.')).toBeVisible();
-  await expect(page.getByLabel('API key status')).toHaveText(new RegExp(`A key is saved \\(…${PLANTED_KEY.slice(-4)}\\)`));
-  await expect(page.getByLabel('API key', { exact: true })).toHaveValue('');
+  // The key is masked (its last four characters), the field is empty, and the key is never sent back.
+  const keyCard = page.getByRole('region', { name: 'OpenAI-compatible server key' });
+  await expect(keyCard).toContainText(`…${PLANTED_KEY.slice(-4)}`);
+  await expect(keyCard.getByLabel('Replace API key')).toHaveValue('');
+  // Test key: the server asks the mock provider (verifyKey) and answers a verdict, never the key.
+  await keyCard.getByRole('button', { name: 'Re-check' }).click();
+  await expect(keyCard.getByText('The key works')).toBeVisible();
+  await expect(keyCard.getByText('1 model available with this key')).toBeVisible();
+  expect(await keyCard.innerText()).not.toContain(PLANTED_KEY);
   await page.getByRole('link', { name: 'Notes' }).click();
 
   await page.getByRole('button', { name: 'New note' }).filter({ visible: true }).first().click();

@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test';
 
 import type { KvoxDesktopBridge } from '../../src/shared/protocol';
+import { openSettingsCard } from '../support/configure-ai';
 
 // =============================================================================
 // The window cannot reach the internet; the server's guard is on (marinoscar/kvox#583)
@@ -68,8 +69,7 @@ test('a request to a non-allowlisted host is blocked in the window and logged wi
   expect(blocked.join('\n')).not.toMatch(/private|token|secret/);
   expect(mainLog.some((line) => line.includes('server: egress guard on, allowing loopback and api.openai.com'))).toBe(true);
 
-  await page.getByRole('link', { name: 'Settings' }).click();
-  await expect(page.getByRole('heading', { name: 'Data and privacy' })).toBeVisible();
+  await openSettingsCard(page, 'Data and privacy');
   await expect(page.getByText(userDataDir, { exact: false })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export data…' })).toBeEnabled();
 
