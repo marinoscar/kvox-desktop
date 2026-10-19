@@ -160,6 +160,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       settings,
       secrets,
       adapters: providers.adapters,
+      checkEgress: (host) => egress.check(host),
       // GitHub Copilot is an opt-in add-on: nothing of it is loaded until the user switches it on.
       copilot: createDefaultCopilotHost({ dataDirectory: join(folder.root, 'copilot') }),
       log: options.log,

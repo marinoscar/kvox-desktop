@@ -7,7 +7,7 @@ import { KVOX_AI, type KvoxAiPort, type KvoxPrincipal } from '@marinoscar/kvox-a
 import { CopilotSettingsSchema, type CopilotSignInChallenge, type CopilotStatus } from './ai/copilot-contract.js';
 import { CopilotConflictError } from './ai/copilot-service.js';
 import { DESKTOP_AI_PROVIDERS, needsKey, type DesktopAiSettings } from './ai/desktop-ai-settings.js';
-import { isSelectableProvider, type DesktopAi, type DesktopAiKeyStatus } from './ai/desktop-ai.js';
+import { isSelectableProvider, type DesktopAi, type DesktopAiKeyStatus, type DesktopAiKeyTestResult } from './ai/desktop-ai.js';
 import type { EgressGuard } from './egress-guard.js';
 
 // =============================================================================
@@ -25,6 +25,14 @@ import type { EgressGuard } from './egress-guard.js';
 // PATCH  /desktop/ai/settings         a JSON Merge Patch of the settings.
 // PUT    /desktop/ai/keys/:provider   `{ apiKey }`: stores it in KVOX_SECRETS.
 // DELETE /desktop/ai/keys/:provider   forgets it.
+// POST   /desktop/ai/keys/:provider/test
+//                                     `{ apiKey? }`: asks the provider whether the
+//                                     typed key (or the stored one) works, through
+//                                     the adapter's `verifyKey`, on this server. The
+//                                     answer is the platform's `AiProbeResult` shape,
+//                                     always 200 (`success` is the verdict); a refused
+//                                     host (egress) or a rejected key is a readable
+//                                     check, never the key.
 //
 // The GitHub Copilot add-on (marinoscar/kvox-desktop#21); every response is a
 // `CopilotStatus` plus the `allowedHosts` the egress guard allows now:
@@ -135,6 +143,14 @@ export class DesktopAiController {
   @KvoxAuth()
   async deleteKey(@CurrentKvoxPrincipal() principal: KvoxPrincipal, @Param('provider') provider: string): Promise<DesktopAiKeyStatus> {
     return this.desktopAi.deleteKey(provider, principal.userId);
+  }
+
+  @Post('keys/:provider/test')
+  @HttpCode(200)
+  @KvoxAuth()
+  async testKey(@Param('provider') provider: string, @Body() body: unknown): Promise<DesktopAiKeyTestResult> {
+    const apiKey = typeof body === 'object' && body !== null ? (body as { apiKey?: unknown }).apiKey : undefined;
+    return this.desktopAi.testKey(provider, apiKey);
   }
 
   // ---- GitHub Copilot ---------------------------------------------------------

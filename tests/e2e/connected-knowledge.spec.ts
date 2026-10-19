@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
 import type { KvoxDesktopBridge } from '../../src/shared/protocol';
-import { MOCK_NOTE_TEXT, configureAiProvider } from '../support/configure-ai';
+import { MOCK_NOTE_TEXT, configureAiProvider, openSettingsCard } from '../support/configure-ai';
 import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
 
 // =============================================================================
@@ -68,8 +68,7 @@ async function askOnce(page: Page): Promise<{ status: number; body: string }> {
 }
 
 async function openSettings(page: Page) {
-  await page.getByRole('link', { name: 'Settings', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Connected knowledge' })).toBeVisible();
+  await openSettingsCard(page, 'Connected knowledge');
   return page.getByLabel('Connected knowledge', { exact: true });
 }
 

@@ -15,20 +15,24 @@ import { KvoxWebHostProvider } from '@marinoscar/kvox-web/core/headless';
 import type { DesktopConnection } from '../../shared/protocol';
 import { createDesktopHost } from './host';
 import { ImportProvider } from './import/ImportProvider';
+import { MenuCommands } from './MenuCommands';
 import { DesktopKnowledgeProvider, useKnowledgeState } from './knowledge';
 import { desktopKnowledgeRoutes, desktopNotesRoutes, renderKvoxRoutes } from './routes';
-import { SettingsPage } from './settings/SettingsPage';
+import { renderDesktopSettingsRoutes } from './settings/routes';
 
 // The shell: one bar, the notes destination, the notes routes, the import
 // (the "Import…" action and a window-wide drop target, marinoscar/kvox#585),
 // the knowledge destinations (Knowledge: the graph index, entity pages, the
 // explorer and the overview; Review: the proposals waiting; Ask; marinoscar/kvox#586)
-// and the settings page (the cards of `settings/registry.tsx`). With connected
+// and Settings (the hub and one page per card of `settings/sections.tsx`, the
+// platform's `SettingsHub`; Note Templates is one of its cards). With connected
 // knowledge switched off (`ai.graphEnabled`, the "Connected knowledge" card,
 // marinoscar/kvox#620) the knowledge destinations and routes are not mounted;
 // the graph itself is kept and comes back when the switch is turned on.
 
-const theme = createTheme({ colorSchemes: { light: true, dark: true } });
+// `data` selector: the View > Toggle light/dark menu item (and #17's toggle) switches the scheme by hand;
+// the default `media` selector would follow the OS only.
+const theme = createTheme({ cssVariables: { colorSchemeSelector: 'data' }, colorSchemes: { light: true, dark: true } });
 
 export function App({ connection }: { connection: DesktopConnection }) {
   const knowledge = useKnowledgeState(connection);
@@ -46,6 +50,7 @@ export function App({ connection }: { connection: DesktopConnection }) {
         <KvoxWebHostProvider host={host}>
           <HashRouter>
             <ImportProvider>
+              <MenuCommands />
               <AppBar position="sticky" color="default" elevation={1}>
                 <Toolbar sx={{ gap: 2 }}>
                   <Typography variant="h6" component="span">
@@ -67,9 +72,6 @@ export function App({ connection }: { connection: DesktopConnection }) {
                       </Button>
                     </>
                   )}
-                  <Button component={RouterLink} to="/settings/note-templates">
-                    Templates
-                  </Button>
                   <Button component={RouterLink} to="/settings">
                     Settings
                   </Button>
@@ -85,7 +87,7 @@ export function App({ connection }: { connection: DesktopConnection }) {
                       <Route path="/" element={<Navigate to="/notes" replace />} />
                       {renderKvoxRoutes(desktopNotesRoutes)}
                       {graphEnabled && renderKvoxRoutes(desktopKnowledgeRoutes)}
-                      <Route path="/settings" element={<SettingsPage />} />
+                      {renderDesktopSettingsRoutes()}
                       <Route path="*" element={<Navigate to="/notes" replace />} />
                     </Routes>
                   </Suspense>

@@ -18,7 +18,8 @@
     "test": "vitest run",
     "e2e": "playwright test",
     "dist": "npm run build && node scripts/dist.mjs --publish never",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "icons": "node scripts/build-icons.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.10",
@@ -71,10 +72,13 @@
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@marinoscar/kvox-web": "0.1.0-next.2",
+    "@marinoscar/platform-web": "0.1.0-next.7",
     "@mui/icons-material": "^9.1.0",
     "@mui/material": "^9.1.0",
+    "@mui/x-data-grid": "^9.15.0",
     "@playwright/test": "^1.64.1",
     "@react-sigma/core": "^5.0.6",
+    "@resvg/resvg-js": "2.6.2",
     "@swc/core": "^1.15.0",
     "@tanstack/react-virtual": "^3.14.12",
     "@tiptap/core": "^3.31.3",
@@ -107,7 +111,8 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
-    "fastify": "$fastify"
+    "fastify": "$fastify",
+    "@marinoscar/platform-web": "0.1.0-next.7"
   },
   "scarfSettings": {
     "enabled": false

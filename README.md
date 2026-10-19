@@ -153,14 +153,28 @@ Host duties Desktop carries for the graph:
 - The RDF peers (`n3`, `jsonld`, `rdf-validate-shacl`) and the `graphology` layout peers are installed.
 - The SHACL validation of a graph import runs in a utility process (`src/main/shacl-validate.ts`, wired through `shacl.run`). The RunAsNode fuse is off, so the package's default of spawning the binary as Node cannot work.
 
+## Settings
+
+**Settings** is the platform's registry-driven hub (`SettingsHub` of `@marinoscar/platform-web/settings/ui`), the same component KVox web uses for `/settings`: a grid of cards, or a list below 600 px wide, each opening its own page with a way back. Desktop adds only the registry, `src/renderer/src/settings/sections.tsx` (`DESKTOP_SETTINGS_SECTIONS`), and one route per card, `settings/routes.tsx`.
+
+| Card | Route | Page |
+|---|---|---|
+| AI provider | `/settings/ai` | The provider, model and server URL, then the platform's key card ([AI providers](#ai-providers)) |
+| Connected knowledge | `/settings/knowledge` | The `ai.graphEnabled` switch |
+| Note Templates | `/settings/note-templates` | The notes slice's templates page (it left the top bar for the hub, as on web) |
+| Data and privacy | `/settings/data` | The data folder, Export data and Restore, how saved keys are protected |
+| Updates | `/settings/updates` | The opt-in "Check for updates" |
+
+Restore and "Store keys without system encryption" ask for a typed confirmation (the platform's `TypedConfirmDialog`: tick the box and type `RESTORE`, or `PLAINTEXT KEYS`). A new page is a card in the registry and a route, appended at the end; `tests/unit/settings-hub.test.tsx` fails when one has no counterpart.
+
 ## AI providers
 
 Settings > AI provider. `KVOX_AI` is the packages' own `createKvoxAi` over `createDirectRuntime` (`@marinoscar/kvox-ai`), with the OpenAI adapters of the lean `@marinoscar/platform-ai-providers` (marinoscar/kvox#578) and the key read from `KVOX_SECRETS` on every call (`src/server/ai/`).
 
 | Provider | Setup | Status |
 |---|---|---|
-| OpenAI | Pick the model and paste the API key; it is stored in the OS keychain | Available |
-| OpenAI-compatible | Set the base URL, model and wire style (Chat Completions or Responses), and a key unless the server takes none | Available |
+| OpenAI | Pick the model, paste the API key and **Save & verify**; it is stored in the OS keychain. **Test** and **Re-check** ask OpenAI whether the key works; **Remove** forgets it | Available |
+| OpenAI-compatible | Set the base URL, model and wire style (Chat Completions or Responses), and a key (same card) unless the server takes none (then the page says "No key needed") | Available |
 | GitHub Copilot | Off by default. An add-on beside the provider above, not a replacement: Settings > AI provider > GitHub Copilot shows what is sent to GitHub and asks for your consent, then you sign in with GitHub. Your own Copilot subscription pays | Available, opt-in. Notes, titles, knowledge extraction and the name check run on Copilot; Ask needs OpenAI (marinoscar/kvox#581) |
 
 GitHub Copilot (marinoscar/kvox-desktop#21) is loaded only while it is switched on. The consent is versioned (`COPILOT_CONSENT_VERSION`): a new text asks again, and a stored setting from before the adapter existed reads as off. While it is on, `routeKvoxTasks` gives each task to Copilot when Copilot can serve it and else to the primary provider when it is usable; what no provider can serve (Ask without an OpenAI key) is reported as `unavailableTasks`. The server may then also reach `COPILOT_EGRESS_HOSTS` (`api.githubcopilot.com`, `github.com`, `api.github.com`), and only while it is on. No GitHub token is ever held by KVox: the Copilot runtime keeps the sign-in, and KVox sees "signed in as <login>". Endpoints (all behind the launch token, in `src/server/desktop-ai.controller.ts`):
@@ -174,6 +188,8 @@ GitHub Copilot (marinoscar/kvox-desktop#21) is loaded only while it is switched 
 | `POST /api/desktop/ai/copilot/sign-out` | Signs the runtime's account out |
 | `POST` / `DELETE /api/desktop/ai/copilot/runtime/download` | Starts (202) or cancels the opt-in runtime download; progress is in the status |
 
+The key block is the platform's `UserAiKeyCard` (`KeylessProviderCard` for a keyless server), the card KVox web shows. **Save & verify** and **Test** run on the local server, never in the window: `POST /api/desktop/ai/keys/:provider/test` calls the adapter's `verifyKey` (and `listModels` for the count) with the typed key, or the stored one when none is typed, and answers a verdict in the platform's `AiProbeResult` shape (HTTP 200; `success` is the answer). The key goes to the provider and nowhere else: not into the answer, an error or a log line. A key the provider rejects is not stored; a host the egress guard refuses (a provider other than the one saved in Settings) is a readable failed check, not a socket error.
+
 The non-secret choices are the system settings namespace `desktopAi` (in the database, so they travel in a backup); keys are `KVOX_SECRETS` purpose `ai`, named after the provider, and never appear in a setting, a response, a log line or an error. Semantic search embeds with OpenAI's `text-embedding-3-small` (the packages' embedding catalog), so it needs an OpenAI key and the OpenAI provider; otherwise search stays full-text.
 
 ## Repository layout
@@ -184,16 +200,16 @@ src/main/        Electron main process: window, kvox:// scheme, window egress gu
                  migration utility processes (node-scripts.ts), opt-in updates (updates.ts, update-policy.ts)
 src/preload/     Preload bridge (kvoxDesktop: connection, data folder, backup dialogs, secret storage, import, updates)
 src/renderer/    React app: KvoxWebHost over loopback, kvox-web notes, graph and Ask screens (routes.tsx),
-                 settings cards (settings/registry.tsx), the Import action and drop target (import/)
+                 the settings hub, its registry and one page per card (settings/), the Import action and drop target (import/)
 src/server/      Utility process: Nest 11 + Fastify 5 on 127.0.0.1, PGlite, server egress guard,
                  the housekeeping timer (housekeeping.ts), the SHACL runner (shacl-runner.ts)
   ports/         One adapter per port (below)
   backup/        .kvoxbackup export and restore, run as jobs
 src/shared/      Main <-> server message types
-scripts/         prepare-db.mjs (schema, migrations, client),
+scripts/         prepare-db.mjs (schema, migrations, client), build-icons.mjs (the icons, `npm run icons`),
                  dist.mjs (installers, signed when the secrets exist), packaged-app.mjs (asar and fuse
                  checks, the e2e copy), release-files.mjs (latest-mac.yml merge, SHA256SUMS, publish gate)
-build/           Packaging resources: macOS entitlements, the NSIS "Remove my data" step, the AppArmor profile
+build/           Packaging resources: macOS entitlements, the NSIS "Remove my data" step, the AppArmor profile, the generated icons (`npm run icons`)
 .github/         ci.yml (every PR: four runners, unsigned installers, e2e on the packaged app), release.yml (v* tags)
 tests/unit/      Vitest: the ports conformance kit, jobs (timeouts, back-off, a real kill mid-job), egress, secrets, backup
 tests/crash/     The child process the crash-recovery test kills
@@ -314,6 +330,8 @@ Turning it off stops the timer and closes the session again. No user data is sen
   | GrantFileProtocolExtraPrivileges | off | The window is served from `kvox://` |
   | LoadBrowserProcessSpecificV8Snapshot | off | |
 
+- **Icons.** Every icon is generated from the KVox mark, never drawn or copied by hand: `npm run icons` reads `@marinoscar/kvox-web/brand/assets/mark.svg` from `node_modules` and rasterizes each size from the vector (`@resvg/resvg-js`, pinned; no network), writing `build/icon.ico` (16 to 256, seven sizes), `build/icon.icns` (16 to 1024 with the @2x entries), `build/linux/icon.png` (512) and `build/linux/icons/<n>x<n>.png` (16 to 512). `npm run icons -- --check` writes nothing and exits 1 when a committed icon differs from a regeneration (a changed `mark.svg` fails it until `npm run icons` is run again); `tests/unit/packaging.test.ts` runs the same comparison on Linux whenever the installed package carries the mark. `electron-builder.yml` points `win.icon`, the NSIS installer and uninstaller, `mac.icon` and `linux.icon` at them; the window icon (taskbar and switcher on Linux and Windows) is read from the resources folder when packaged and from `build/` in development (`src/main/app-icon.ts`).
+- **Application menu** (`src/main/menu.ts`). KVox's own, not Electron's default: File (New note, Import…, Settings, Quit), Edit, View (Toggle light/dark, zoom, full screen), Window and Help (About KVox with the Electron, Chromium, Node and `@marinoscar/*` versions, Open data folder, View licences, which opens the bundled `LICENSE.txt`). Reload and Developer Tools exist only when `!app.isPackaged`. No item opens a remote URL ([ADR-0004](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0004-desktop-data-local-only.md)); `tests/unit/menu.test.ts` walks the template for one. The menu sends the window `menu:navigate`, `menu:toggle-theme` and `menu:import` (`src/shared/protocol.ts`); the renderer validates the path (`parseMenuPath`) and acts (`src/renderer/src/MenuCommands.tsx`).
 - **macOS**: hardened runtime; one entitlement, `com.apple.security.cs.allow-jit` (V8 compiles JavaScript and WebAssembly, PGlite included, at run time). Not granted: unsigned executable memory, disabled library validation.
 - **Windows**: per-user NSIS (no admin), x64 and arm64 in one installer; the Prisma schema engine is x64 and runs emulated on arm64.
 
