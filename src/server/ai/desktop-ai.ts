@@ -19,7 +19,7 @@ import { AI_KEYLESS_API_KEY, AiError, type AiCallContext, type AiProviderAdapter
 import { createOpenAiAdapter, createOpenAiCompatibleAdapter } from '@marinoscar/platform-ai-providers/openai';
 
 import { isLoopback } from '../egress-guard.js';
-import { COPILOT_CONSENT_VERSION, type CopilotSettings, type CopilotSignInChallenge, type CopilotStatus } from './copilot-contract.js';
+import { COPILOT_CONSENT_VERSION, type CopilotSettings, type CopilotSignInChallenge, type CopilotStatus } from '@marinoscar/kvox-contract/copilot';
 import type { CopilotHost } from './copilot-host.js';
 import { CopilotConflictError, CopilotService } from './copilot-service.js';
 import {

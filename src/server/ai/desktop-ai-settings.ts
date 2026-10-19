@@ -1,11 +1,11 @@
 import { z } from 'zod';
 
 import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
+import { COPILOT_CONSENT_VERSION, COPILOT_DEFAULT_SETTINGS, CopilotSettingsSchema, type CopilotSettings } from '@marinoscar/kvox-contract/copilot';
 import type { KvoxSettingsNamespaceDef } from '@marinoscar/kvox-api/ports';
 
 import { isLoopback } from '../egress-guard.js';
 import { COPILOT_RUNTIME_DOWNLOAD_HOSTS } from './copilot-sandbox.js';
-import { COPILOT_CONSENT_VERSION, CopilotSettingsSchema, type CopilotSettings } from './copilot-contract.js';
 
 // =============================================================================
 // The AI provider settings of KVox Desktop (marinoscar/kvox#584)
@@ -113,7 +113,7 @@ const baseUrl = z
   .transform((value) => value.replace(/\/+$/, ''));
 
 /** Copilot off, no consent, no model chosen. */
-export const DEFAULT_COPILOT_SETTINGS: CopilotSettings = { enabled: false, consentedAt: null, consentVersion: null, model: null };
+export const DEFAULT_COPILOT_SETTINGS: CopilotSettings = { ...COPILOT_DEFAULT_SETTINGS };
 
 export const desktopAiSettingsSchema = z.object({
   /** The active provider, or `null` for AI off. */

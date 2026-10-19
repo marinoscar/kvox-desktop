@@ -12,7 +12,7 @@ import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
 import { COPILOT_RUNTIME_DOWNLOAD_HOSTS } from '../../src/server/ai/copilot-sandbox';
 import type { AiProviderAdapter } from '@marinoscar/platform-ai-providers';
 
-import { COPILOT_CONSENT_VERSION } from '../../src/server/ai/copilot-contract';
+import { COPILOT_CONSENT_VERSION } from '@marinoscar/kvox-contract/copilot';
 import type { CopilotHost } from '../../src/server/ai/copilot-host';
 import {
   AI_KEY_PURPOSE,

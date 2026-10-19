@@ -4,7 +4,7 @@ import type { CopilotProviderAdapter, CopilotTransport, PreparedCopilotRuntime }
 import { AI_KEYLESS_API_KEY } from '@marinoscar/platform-ai-providers';
 
 import { CopilotDownloadUnavailableError, type CopilotHost } from './copilot-host.js';
-import type { CopilotSignInChallenge, CopilotStatus } from './copilot-contract.js';
+import type { CopilotSignInChallenge, CopilotStatus } from '@marinoscar/kvox-contract/copilot';
 
 // =============================================================================
 // The Copilot lifecycle of KVox Desktop (marinoscar/kvox-desktop#21)

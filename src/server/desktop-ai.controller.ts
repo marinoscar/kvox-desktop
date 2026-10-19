@@ -4,7 +4,7 @@ import type { FastifyReply } from 'fastify';
 import { CurrentKvoxPrincipal, KvoxAuth } from '@marinoscar/kvox-api/core';
 import { KVOX_AI, type KvoxAiPort, type KvoxPrincipal } from '@marinoscar/kvox-api/ports';
 
-import { CopilotSettingsSchema, type CopilotSignInChallenge, type CopilotStatus } from './ai/copilot-contract.js';
+import { CopilotSettingsSchema, type CopilotSignInChallenge, type CopilotStatus } from '@marinoscar/kvox-contract/copilot';
 import { CopilotConflictError } from './ai/copilot-service.js';
 import { DESKTOP_AI_PROVIDERS, needsKey, type DesktopAiSettings } from './ai/desktop-ai-settings.js';
 import { isSelectableProvider, type DesktopAi, type DesktopAiKeyStatus, type DesktopAiKeyTestResult } from './ai/desktop-ai.js';

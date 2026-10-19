@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
 
-import { COPILOT_CONSENT_VERSION } from '../../src/server/ai/copilot-contract';
+import { COPILOT_CONSENT_VERSION } from '@marinoscar/kvox-contract/copilot';
 import { DEFAULT_DESKTOP_AI_SETTINGS, allowedHostsFor, type DesktopAiSettings } from '../../src/server/ai/desktop-ai-settings';
 import { EgressBlockedError, EgressGuard, isLoopback } from '../../src/server/egress-guard';
 

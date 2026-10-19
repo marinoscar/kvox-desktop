@@ -4,7 +4,7 @@ import { createCopilotMockTransport, type CopilotMockTransport, type CopilotMock
 
 import { AiError } from '@marinoscar/platform-ai-providers';
 
-import { COPILOT_CONSENT_VERSION } from '../../src/server/ai/copilot-contract';
+import { COPILOT_CONSENT_VERSION } from '@marinoscar/kvox-contract/copilot';
 import type { CopilotHost } from '../../src/server/ai/copilot-host';
 import type { DesktopAi } from '../../src/server/ai/desktop-ai';
 
