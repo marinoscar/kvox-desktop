@@ -16,6 +16,15 @@
 # its working directory there) and the schema engine itself, a native binary.
 # src/server/database.ts reads them from there. scripts/packaged-app.mjs
 # verifies this layout and the fuses in CI.
+#
+# THE COPILOT RUNTIME IS NOT HERE (marinoscar/kvox-desktop#23). The GitHub
+# Copilot SDK drives a separate runtime of 130 to 175 MB per platform. This
+# default installer carries neither it nor the per-platform npm packages that
+# hold it (`@github/copilot-sdk-<platform>`, excluded in `files` below): the
+# first opt-in downloads it into <userData>/copilot/runtime. The optional
+# "with-copilot" flavour is electron-builder.with-copilot.yml (README,
+# "Packaging"). tests/unit/packaging.test.ts and `packaged-app.mjs verify` fail
+# if the default installer ever gains the runtime or outgrows its size budget.
 # =============================================================================
 appId: cr.marin.kvox.desktop
 productName: KVox
@@ -34,6 +43,9 @@ files:
   - prisma.config.ts
   - package.json
   - "!**/*.map"
+  # The Copilot runtime packages (one per platform, 130 MB or more each): downloaded
+  # on the first opt-in, never packed. (The SDK's own JavaScript stays: it is small.)
+  - "!node_modules/@github/copilot-sdk-*/**"
   # The query compilers of the databases this app does not run. (Prisma Studio
   # and `prisma dev`, ~80 MB, stay: the Prisma CLI loads them eagerly.)
   - "!node_modules/@prisma/client/runtime/*{cockroachdb,mysql,sqlite,sqlserver}*"

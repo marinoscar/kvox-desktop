@@ -1,0 +1,33 @@
+# =============================================================================
+# electron-builder: the "with-copilot" flavour (marinoscar/kvox-desktop#23)
+# =============================================================================
+#
+# OFF BY DEFAULT. The default installer (electron-builder.yml) downloads the
+# GitHub Copilot runtime on the first opt-in. This flavour ships it instead, for
+# machines that cannot reach the download hosts (offline installs). It extends
+# the default config and adds ONE thing: the runtime as an `extraResource`, which
+# lands in <resources>/copilot/ beside app.asar, never inside it (a file in an
+# asar archive cannot be executed). src/server/ai/copilot-runtime-location.ts
+# finds it there and hands it to `prepareCopilotRuntime` as `bundledRuntimePath`.
+#
+#   1. Stage the runtime of every platform/arch you build (README, "Packaging"):
+#        build/copilot-runtime/<os>-<arch>/copilot-runtime[.exe] + runtime.node
+#      where <os> is win | mac | linux and <arch> is x64 | arm64.
+#   2. node scripts/dist.mjs --config electron-builder.with-copilot.yml ...
+#
+# Not exercised in CI. The installer is 130 to 175 MB larger. It is written to
+# release-with-copilot/, so it never mixes with the default installers that
+# `scripts/packaged-app.mjs verify` checks in release/. Verify it with
+# `node scripts/packaged-app.mjs verify --allow-bundled-copilot` after pointing
+# release/ at it, or by hand: <resources>/copilot/ must hold the launcher.
+# =============================================================================
+extends: electron-builder.yml
+directories:
+  output: release-with-copilot
+  buildResources: build
+extraResources:
+  - from: build/copilot-runtime/${os}-${arch}
+    to: copilot
+    filter:
+      - copilot-runtime*
+      - runtime.node

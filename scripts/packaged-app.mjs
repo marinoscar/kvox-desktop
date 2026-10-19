@@ -13,6 +13,11 @@
 //       `app.asar.unpacked`, no loose `resources/app` folder (Electron would
 //       load it instead of the archive) and every fuse as configured.
 //
+//       Also fails when the Copilot runtime (`runtime.node`, `copilot-runtime`,
+//       `@github/copilot-sdk-<platform>`) is on disk or inside app.asar, or a single file
+//       outside the archive passes the size budget (marinoscar/kvox-desktop#23); pass
+//       --allow-bundled-copilot for the optional with-copilot flavour.
+//
 //   node scripts/packaged-app.mjs test-copy [executable] [--in-place]
 //       Playwright drives Electron through `--inspect`, which the shipped
 //       binary refuses (EnableNodeCliInspectArguments off). This copies the
@@ -23,6 +28,7 @@
 // =============================================================================
 
 import { cpSync, existsSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -90,7 +96,64 @@ export async function readFuses(executable) {
   return fuses;
 }
 
-async function verify(executable) {
+/**
+ * The size budget of ONE file outside app.asar. The Copilot runtime's `runtime.node` is 130 MB or
+ * more per platform; nothing else KVox ships is near this.
+ */
+export const MAX_LOOSE_FILE_BYTES = 100 * 1024 * 1024;
+
+/** The Copilot runtime's artifacts, by path (a file name or a platform package folder). */
+const COPILOT_RUNTIME_PATH = /(^|\/)(runtime\.node|copilot-runtime(\.exe)?|@github\/copilot-sdk-[a-z0-9-]+)(\/|$)/;
+
+/** Every file under a folder: [path relative to it with `/`, size]. */
+function walkFiles(root) {
+  const found = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile()) found.push([relative(root, path).split('\\').join('/'), statSync(path).size]);
+    }
+  };
+  if (existsSync(root)) walk(root);
+  return found;
+}
+
+/**
+ * Problems with the Copilot runtime and the size budget of an app's `resources/` folder
+ * (marinoscar/kvox-desktop#23). The default installer downloads the runtime on the first opt-in,
+ * so it must not carry it: not beside the archive, not inside `app.asar` (`archiveEntries`, its
+ * listing; pass [] when unknown). `allowBundled` is the with-copilot flavour: the runtime may
+ * then be in `resources/copilot/` and nowhere else.
+ */
+export function copilotRuntimeProblems(resources, { archiveEntries = [], allowBundled = false } = {}) {
+  const problems = [];
+  for (const entry of archiveEntries) {
+    if (COPILOT_RUNTIME_PATH.test(entry.split('\\').join('/'))) problems.push(`app.asar contains the Copilot runtime (${entry})`);
+  }
+  for (const [path, size] of walkFiles(resources)) {
+    if (path.startsWith('app.asar/')) continue;
+    const bundled = path.startsWith('copilot/');
+    if (COPILOT_RUNTIME_PATH.test(path) && !(allowBundled && bundled)) {
+      problems.push(`the Copilot runtime is in the installer (resources/${path})`);
+    } else if (size > MAX_LOOSE_FILE_BYTES && !(allowBundled && bundled) && path !== 'app.asar') {
+      problems.push(`resources/${path} is ${Math.round(size / 1048576)} MB, over the ${MAX_LOOSE_FILE_BYTES / 1048576} MB size budget`);
+    }
+  }
+  return problems;
+}
+
+/** The entry names of an app.asar, or [] when it cannot be listed. */
+function archiveEntriesOf(archive) {
+  try {
+    const asar = createRequire(import.meta.url)('@electron/asar');
+    return asar.listPackage(archive, { isPack: false });
+  } catch {
+    return [];
+  }
+}
+
+async function verify(executable, { allowBundledCopilot = false } = {}) {
   const resources = resourcesOf(executable);
   const unpacked = join(resources, 'app.asar.unpacked');
   const problems = [];
@@ -105,6 +168,13 @@ async function verify(executable) {
   const engines = join(unpacked, 'node_modules', '@prisma', 'engines');
   const engine = existsSync(engines) ? readdirSync(engines).find((name) => name.startsWith('schema-engine')) : undefined;
   must(engine !== undefined, 'the Prisma schema engine is not unpacked');
+
+  for (const problem of copilotRuntimeProblems(resources, {
+    archiveEntries: archiveEntriesOf(join(resources, 'app.asar')),
+    allowBundled: allowBundledCopilot,
+  })) {
+    must(false, problem);
+  }
 
   const fuses = await readFuses(executable);
   for (const [name, expected] of Object.entries(EXPECTED_FUSES)) {
@@ -149,11 +219,11 @@ async function main(argv) {
   else if (command === 'verify') {
     const all = executable ? [executable] : unpackedApps();
     if (all.length === 0) locate();
-    for (const app of all) await verify(app);
+    for (const app of all) await verify(app, { allowBundledCopilot: rest.includes('--allow-bundled-copilot') });
   }
   else if (command === 'test-copy') await testCopy(executable ?? locate(), rest.includes('--in-place'));
   else {
-    console.error('usage: packaged-app.mjs locate | verify [executable] | test-copy [executable] [--in-place]');
+    console.error('usage: packaged-app.mjs locate | verify [executable] [--allow-bundled-copilot] | test-copy [executable] [--in-place]');
     process.exit(2);
   }
 }
