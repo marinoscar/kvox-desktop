@@ -50,6 +50,14 @@ export interface DesktopConnection {
   token: string;
   userId: string;
   permissions: string[];
+  /** The operating-system user name, shown in the user menu; absent when the OS gives none (the shell then says "You"). */
+  displayName?: string;
+}
+
+/** The shell's preferences kept in `<userData>/settings.json` (the platform's `ShellPreferences`, restricted to what Desktop stores). */
+export interface ShellPreferencesState {
+  /** The desktop rail is collapsed. */
+  railCollapsed: boolean;
 }
 
 /** How saved keys are protected (Electron `safeStorage`), as the settings card shows it. */
@@ -145,6 +153,14 @@ export interface KvoxDesktopBridge {
   themeMode(): Promise<ThemeMode>;
   /** Tells the shell the choice the page made, so the next launch paints the right window colour. */
   setThemeMode(mode: ThemeMode): Promise<void>;
+  /** The shell's saved preferences (the rail's collapse state); defaults until one is made. */
+  shellPreferences(): Promise<ShellPreferencesState>;
+  /** Saves the preferences in `patch` (validated in main); fields it omits are kept. */
+  setShellPreferences(patch: Partial<ShellPreferencesState>): Promise<void>;
+  /** Opens the user data folder in the system file manager (the menu's Help > Open data folder). */
+  openDataFolder(): Promise<void>;
+  /** Shows the About panel (the menu's Help > About KVox). */
+  showAbout(): Promise<void>;
   /**
    * Opens `https://github.com/...` in the system browser (the Copilot card's device-code and terms
    * links); answers false, and opens nothing, for any other address.

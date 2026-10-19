@@ -11,7 +11,8 @@ import { parseThemeMode, type ThemeMode } from '../shared/protocol';
 // consent to store saved keys with Linux's `basic_text` backend, whether
 // KVox checks for updates (off unless the user turns it on: ADR-0004) and the
 // theme choice (the renderer owns it in localStorage; main keeps a copy so the
-// window is painted in the right colour before any page exists). The
+// window is painted in the right colour before any page exists) and the shell's
+// rail preference (collapsed or expanded, marinoscar/kvox-desktop#18). The
 // KVOX_SETTINGS namespaces are not here; they live in the database. Written
 // whole through a temporary file and a rename.
 // =============================================================================
@@ -21,9 +22,11 @@ export interface ShellSettings {
   updates: { checkForUpdates: boolean };
   /** Light, dark, or `system` (the default). */
   themeMode: ThemeMode;
+  /** The shell's own preferences, the `ShellPreferencesPort` of the renderer (marinoscar/kvox-desktop#18). */
+  shell: { railCollapsed: boolean };
 }
 
-const DEFAULTS: ShellSettings = { secrets: { allowPlaintext: false }, updates: { checkForUpdates: false }, themeMode: 'system' };
+const DEFAULTS: ShellSettings = { secrets: { allowPlaintext: false }, updates: { checkForUpdates: false }, themeMode: 'system', shell: { railCollapsed: false } };
 
 export function readShellSettings(path: string): ShellSettings {
   try {
@@ -34,6 +37,8 @@ export function readShellSettings(path: string): ShellSettings {
       updates: { checkForUpdates: parsed.updates?.checkForUpdates === true },
       // Anything but a known mode (a missing or damaged value) is `system`.
       themeMode: parseThemeMode(parsed.themeMode) ?? 'system',
+      // Only an explicit `true` collapses the rail: a missing or damaged value is expanded.
+      shell: { railCollapsed: parsed.shell?.railCollapsed === true },
     };
   } catch {
     return structuredClone(DEFAULTS);

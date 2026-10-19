@@ -5,7 +5,7 @@ import { MENU_CHANNELS, type KvoxDesktopBridge } from '../shared/protocol';
 // The renderer's one door to the shell: where the local server listens and the
 // per-launch token, the native backup dialogs, the secret-storage status, the
 // import (the dialog, and the paths of files dropped on the window) and the
-// opt-in updates, the theme choice (kept so the window is painted in it on the next launch), and the three commands the application menu sends (the page
+// opt-in updates, the theme choice (kept so the window is painted in it on the next launch), the shell's preferences (the rail), the two user-menu commands (data folder, About), and the three commands the application menu sends (the page
 // gets the payload, never the IPC event).
 // Nothing else of Node or Electron reaches the page.
 function subscribe(channel: string, handler: (payload: unknown) => void): () => void {
@@ -35,6 +35,10 @@ const bridge: KvoxDesktopBridge = {
     ),
   themeMode: () => ipcRenderer.invoke('kvox:theme-mode'),
   setThemeMode: (mode) => ipcRenderer.invoke('kvox:set-theme-mode', mode),
+  shellPreferences: () => ipcRenderer.invoke('kvox:shell-preferences'),
+  setShellPreferences: (patch) => ipcRenderer.invoke('kvox:set-shell-preferences', patch),
+  openDataFolder: () => ipcRenderer.invoke('kvox:open-data-folder'),
+  showAbout: () => ipcRenderer.invoke('kvox:show-about'),
   // The main process opens only https://github.com/... (src/main/open-external.ts).
   openExternal: (url) => ipcRenderer.invoke('kvox:open-external', typeof url === 'string' ? url : ''),
   onMenuNavigate: (handler) => subscribe(MENU_CHANNELS.navigate, (payload) => handler(payload)),

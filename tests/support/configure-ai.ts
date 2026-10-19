@@ -1,5 +1,7 @@
 import { expect, type Page } from '@playwright/test';
 
+import { goTo } from './rail';
+
 // =============================================================================
 // The e2e step every AI flow starts with: Settings > AI provider (marinoscar/kvox#584)
 // =============================================================================
@@ -22,8 +24,8 @@ const PLAINTEXT_PHRASE = 'PLAINTEXT KEYS';
 
 /** Opens Settings (the hub) and then one card's page, as a user does. */
 export async function openSettingsCard(page: Page, title: string): Promise<void> {
-  // First: a settings page also carries a "Settings" way back, after the top bar's link.
-  await page.getByRole('link', { name: 'Settings' }).first().click();
+  // The rail's Settings item (a settings page also carries a "Settings" way back, which is not it).
+  await goTo(page, 'Settings');
   await expect(page.getByRole('heading', { name: 'Settings', level: 4 })).toBeVisible();
   await page.getByRole('button', { name: new RegExp(`^${title}`) }).click();
   await expect(page.getByRole('heading', { name: title, level: 1 })).toBeVisible();
@@ -59,6 +61,6 @@ export async function configureAiProvider(page: Page, options: { baseUrl: string
   await page.getByLabel('API key', { exact: true }).fill(options.apiKey);
   await page.getByRole('button', { name: 'Save & verify' }).click();
   await expect(page.getByText('Key verified and saved.')).toBeVisible();
-  await page.getByRole('link', { name: 'Notes' }).click();
+  await goTo(page, 'Notes');
   await expect(page.getByRole('heading', { name: 'Notes', level: 1 })).toBeVisible();
 }

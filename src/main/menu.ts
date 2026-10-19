@@ -161,8 +161,8 @@ function readPackageJson(): { dependencies?: Record<string, string>; devDependen
   }
 }
 
-/** Installs the menu on `app.whenReady`'s tick; `window` is the window the commands go to. */
-export function installApplicationMenu(options: { window: () => BrowserWindow | undefined; log: (line: string) => void }): void {
+/** Installs the menu on `app.whenReady`'s tick; `window` is the window the commands go to. Returns the menu's actions. */
+export function installApplicationMenu(options: { window: () => BrowserWindow | undefined; log: (line: string) => void }): MenuActions {
   const env = { isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() };
   const send = (channel: string, payload?: string): void => {
     const target = options.window()?.webContents;
@@ -217,4 +217,6 @@ export function installApplicationMenu(options: { window: () => BrowserWindow | 
   };
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate({ platform: process.platform, isPackaged: app.isPackaged, actions })));
+  // The same actions back the renderer's user menu ("Open data folder", "About KVox"): one implementation of each.
+  return actions;
 }

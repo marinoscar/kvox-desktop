@@ -1,8 +1,4 @@
-import type { ReactElement } from 'react';
-import { Navigate, Route } from 'react-router-dom';
-
 import { AskEntityButtonSlot, AskEntityPanelSlot, kvoxAskRoutes } from '@marinoscar/kvox-web/ask/ui';
-import { useHasPermission } from '@marinoscar/kvox-web/core/headless';
 import type { KvoxRouteDef } from '@marinoscar/kvox-web/core/ui';
 import { GraphEntityPage, graphNotePageSlots, graphNotesLibrarySlots, kvoxGraphRoutes } from '@marinoscar/kvox-web/graph/ui';
 import type { GraphEntityPageSlots } from '@marinoscar/kvox-web/graph/ui';
@@ -12,9 +8,11 @@ import { ImportButton } from './import/ImportProvider';
 import { desktopNotesAiAccess } from './notesAi';
 
 // =============================================================================
-// Routes: the slices' route data, rendered with the host's own guard
+// Routes: the slices' route data, as Desktop places it
 // =============================================================================
 //
+// The <Route> elements and their permission guard are the shell package's (see App.tsx); this file only
+// decides which pages are wrapped.
 // The pages that take an `ai` prop or slots are wrapped (the web edition's
 // apps/web/src/kvox/notesRoutes.ts and graphRoutes.ts do the same), and the
 // library gets the "Import…" action beside "New note" (marinoscar/kvox#585);
@@ -49,23 +47,3 @@ export const desktopKnowledgeRoutes: readonly KvoxRouteDef[] = [
   ...kvoxGraphRoutes.map((route) => (route.path === '/graph/entities/:id' ? { ...route, Component: GraphEntityPageWithAsk } : route)),
   ...kvoxAskRoutes,
 ];
-
-function Gate({ permission, redirectTo, children }: { permission?: string; redirectTo?: string; children: ReactElement }) {
-  const allowed = useHasPermission(permission ?? '');
-  return permission === undefined || allowed ? children : <Navigate to={redirectTo ?? '/'} replace />;
-}
-
-/** The `<Route>` elements of a slice's route data. */
-export function renderKvoxRoutes(routes: readonly KvoxRouteDef[]) {
-  return routes.map(({ path, permission, redirectTo, Component }) => (
-    <Route
-      key={path}
-      path={path}
-      element={
-        <Gate permission={permission} redirectTo={redirectTo}>
-          <Component />
-        </Gate>
-      }
-    />
-  ));
-}

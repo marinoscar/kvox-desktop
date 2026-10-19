@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { userInfo } from 'node:os';
 import { join, normalize, relative, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -6,7 +7,7 @@ import { BrowserWindow, Notification, app, dialog, ipcMain, nativeTheme, net, pr
 
 import { parseThemeMode, type DesktopConnection, type FromServer, type ThemeMode, type ToServer } from '../shared/protocol';
 import { windowIconPath } from './app-icon';
-import { installApplicationMenu } from './menu';
+import { installApplicationMenu, type MenuActions } from './menu';
 import { runNodeScript } from './node-scripts';
 import { openExternalChecked } from './open-external';
 import { registerImportIpc } from './import';
@@ -67,6 +68,8 @@ let server: UtilityProcess | undefined;
 let connection: Promise<DesktopConnection> | undefined;
 let stopping: Promise<void> | undefined;
 let mainWindow: BrowserWindow | undefined;
+/** The application menu's actions, once installed: the renderer's user menu runs the same two (data folder, About). */
+let menuActions: MenuActions | undefined;
 
 function log(line: string): void {
   console.log(`[kvox] ${line}`);
@@ -114,7 +117,13 @@ function startServer(): Promise<DesktopConnection> {
         void restartServer(message.reason);
       } else if (message.type === 'ready') {
         log(`server ready on 127.0.0.1:${message.port} after ${Math.round(performance.now() - launchedAt)} ms since launch`);
-        resolve({ baseUrl: `http://127.0.0.1:${message.port}`, token, userId: message.userId, permissions: message.permissions });
+        resolve({
+          baseUrl: `http://127.0.0.1:${message.port}`,
+          token,
+          userId: message.userId,
+          permissions: message.permissions,
+          ...osUserName(),
+        });
       } else if (message.type === 'error') {
         log(`server failed to start:\n${message.message}`);
         reject(new Error(message.message));
@@ -214,6 +223,16 @@ function installEgressGuard(): void {
   });
 }
 
+/** The operating-system user name for the user menu (`displayName`), or nothing when the OS gives none. */
+function osUserName(): { displayName?: string } {
+  try {
+    const name = userInfo().username.trim();
+    return name === '' ? {} : { displayName: name };
+  } catch {
+    return {};
+  }
+}
+
 /** The window's requests to the shell besides the connection. */
 function registerShellIpc(): void {
   ipcMain.handle('kvox:data-folder', () => app.getPath('userData'));
@@ -255,6 +274,18 @@ function registerShellIpc(): void {
     }
     applyThemeMode(mode);
   });
+  ipcMain.handle('kvox:shell-preferences', () => ({ railCollapsed: readShellSettings(settingsPath()).shell.railCollapsed }));
+  ipcMain.handle('kvox:set-shell-preferences', (_event, patch: unknown) => {
+    const railCollapsed = (patch as { railCollapsed?: unknown } | null)?.railCollapsed;
+    if (typeof railCollapsed !== 'boolean') return;
+    const settings = readShellSettings(settingsPath());
+    if (settings.shell.railCollapsed === railCollapsed) return;
+    settings.shell.railCollapsed = railCollapsed;
+    writeShellSettings(settingsPath(), settings);
+  });
+  // The user menu's rows run the application menu's own actions (one implementation each).
+  ipcMain.handle('kvox:open-data-folder', () => menuActions?.openDataFolder());
+  ipcMain.handle('kvox:show-about', () => menuActions?.showAbout());
   ipcMain.handle('kvox:updates', () => updates.status());
   ipcMain.handle('kvox:set-updates-enabled', (_event, enabled: unknown) => updates.setEnabled(enabled === true));
   ipcMain.handle('kvox:install-update', () => updates.installNow());
@@ -334,7 +365,7 @@ if (!app.requestSingleInstanceLock()) {
     installEgressGuard();
     updates.start();
     registerAppProtocol();
-    installApplicationMenu({ window: () => mainWindow, log });
+    menuActions = installApplicationMenu({ window: () => mainWindow, log });
     connection = startServer();
     connection.catch(() => undefined);
     createWindow();

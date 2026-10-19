@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
 import { openSettingsCard } from '../support/configure-ai';
+import { goTo, railItem } from '../support/rail';
 import {
   COPILOT_ACCEPT_LABEL,
   COPILOT_CONSENT_TITLE,
@@ -124,12 +125,14 @@ test('Copilot: consent, runtime download, sign-in, a note on Copilot, sign-out',
   await expect(capabilities.getByRole('listitem').filter({ hasText: 'Notes' }).getByText('Available')).toBeVisible();
   await expect(capabilities.getByRole('listitem').filter({ hasText: 'Ask' }).getByText('Not available')).toBeVisible();
 
-  // ---- Ask is disabled in the top bar, with the reason --------------------------
-  await page.getByRole('link', { name: 'Notes' }).click();
-  const ask = page.getByRole('button', { name: /^Ask/ });
-  await expect(ask).toBeDisabled();
-  await page.getByLabel(/^Ask\./).hover();
-  await expect(page.getByRole('tooltip')).toContainText('add an OpenAI key');
+  // ---- Ask is flagged in the rail, with the reason; its click leads to the AI provider page -------
+  await goTo(page, 'Notes');
+  const flag = railItem(page, 'Ask').getByTestId('ask-unavailable');
+  await expect(flag).toBeVisible();
+  await expect(flag).toHaveAttribute('title', /add an OpenAI key/);
+  await goTo(page, 'Ask');
+  await page.waitForURL(/#\/settings\/ai$/);
+  await goTo(page, 'Notes');
 
   // ---- A note, generated on Copilot ---------------------------------------------
   await page.getByRole('button', { name: 'New note' }).filter({ visible: true }).first().click();

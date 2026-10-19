@@ -6,6 +6,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 
 import type { KvoxDesktopBridge } from '../../src/shared/protocol';
 import { MOCK_NOTE_TEXT, configureAiProvider } from '../support/configure-ai';
+import { goTo, railItem } from '../support/rail';
 import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
 import { QUESTIONS, scriptedModel } from '../support/scripted-model';
 
@@ -111,7 +112,8 @@ async function until<T>(read: () => Promise<T>, done: (value: T) => boolean, wha
 
 /** Import -> note -> extraction -> Review: accept all -> Send to graph. Answers the note id. */
 async function importAndCommit(page: Page, meeting: (typeof MEETINGS)[number]): Promise<string> {
-  await page.goto(page.url().replace(/#.*$/, '#/notes'));
+  await goTo(page, 'Notes');
+  await page.waitForURL(/#\/notes$/);
   await answerDialogWith(app!, [join(FIXTURES, meeting.file)]);
   await page.getByRole('button', { name: 'Import…' }).click();
   await page.waitForURL(/#\/notes\/new\?transcriptId=/);
@@ -151,7 +153,7 @@ async function importAndCommit(page: Page, meeting: (typeof MEETINGS)[number]): 
 
 /** Asks in the Ask page, waits for the turn and answers the stored assistant message. */
 async function ask(page: Page, question: string, key: string = question): Promise<AskAnswer> {
-  await page.goto(page.url().replace(/#.*$/, '#/ask'));
+  await goTo(page, 'Ask');
   const box = page.getByPlaceholder('Ask about your meetings, people and projects…');
   await expect(box).toBeVisible();
   await box.fill(question);
@@ -206,6 +208,15 @@ test('the reference questions are answered with citations, and a manager set by 
   const person = new Map(persons.items.map((e) => [e.label, e.id]));
   const meetings = await api<{ items: Array<{ id: string; label: string }> }>(page, '/graph/entities?type=Meeting');
   expect(meetings.items.map((e) => e.label).sort()).toEqual(MEETINGS.map((m) => m.title).sort());
+
+  // ---- The rail reaches the graph destinations (the shell, marinoscar/kvox-desktop#18) ----
+  await goTo(page, 'Knowledge');
+  await page.waitForURL(/#\/graph$/);
+  await expect(railItem(page, 'Knowledge')).toHaveAttribute('aria-current', 'page');
+  await goTo(page, 'Review');
+  await page.waitForURL(/#\/graph\/review$/);
+  await expect(railItem(page, 'Review')).toHaveAttribute('aria-current', 'page');
+  await expect(railItem(page, 'Knowledge')).not.toHaveAttribute('aria-current', 'page');
 
   // ---- ATTENDED from the named speakers (the D4 leftover) ------------------
   const attended: Record<string, string[]> = {};

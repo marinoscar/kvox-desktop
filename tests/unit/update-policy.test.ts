@@ -90,7 +90,12 @@ describe('the "Check for updates" setting', () => {
     settings.secrets.allowPlaintext = true;
     settings.updates.checkForUpdates = true;
     writeShellSettings(path, settings);
-    expect(readShellSettings(path)).toEqual({ secrets: { allowPlaintext: true }, updates: { checkForUpdates: true }, themeMode: 'system' });
+    expect(readShellSettings(path)).toEqual({
+      secrets: { allowPlaintext: true },
+      updates: { checkForUpdates: true },
+      themeMode: 'system',
+      shell: { railCollapsed: false },
+    });
     settings.updates.checkForUpdates = false;
     writeShellSettings(path, settings);
     expect(readShellSettings(path).updates.checkForUpdates).toBe(false);
