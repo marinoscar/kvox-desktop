@@ -11,6 +11,7 @@ import Typography from '@mui/material/Typography';
 import { KvoxWebHostProvider } from '@marinoscar/kvox-web/core/headless';
 
 import type { DesktopConnection } from '../../shared/protocol';
+import { AskNavButton } from './AskNavButton';
 import { createDesktopHost } from './host';
 import { ImportProvider } from './import/ImportProvider';
 import { MenuCommands } from './MenuCommands';
@@ -67,9 +68,7 @@ export function App({ connection }: { connection: DesktopConnection }) {
                       <Button component={RouterLink} to="/graph/review">
                         Review
                       </Button>
-                      <Button component={RouterLink} to="/ask">
-                        Ask
-                      </Button>
+                      <AskNavButton />
                     </>
                   )}
                   <Button component={RouterLink} to="/settings">

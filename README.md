@@ -221,6 +221,19 @@ The key block is the platform's `UserAiKeyCard` (`KeylessProviderCard` for a key
 
 The non-secret choices are the system settings namespace `desktopAi` (in the database, so they travel in a backup); keys are `KVOX_SECRETS` purpose `ai`, named after the provider, and never appear in a setting, a response, a log line or an error. Semantic search embeds with OpenAI's `text-embedding-3-small` (the packages' embedding catalog), so it needs an OpenAI key and the OpenAI provider; otherwise search stays full-text.
 
+### Turning on GitHub Copilot
+
+Settings > AI provider shows the Copilot card below the provider form (the packaged `CopilotProviderCard` of `@marinoscar/kvox-web/copilot/ui`, the same card on every host; the wording is the package's). Desktop only binds it: `src/renderer/src/settings/copilotPort.ts` maps the card's six routes to `/api/desktop/ai/copilot/*`, `CopilotSection.tsx` renders it, and the renderer never sees a token.
+
+1. **Switch it on.** It is off by default. The switch opens the consent: what is sent to GitHub, GitHub's terms and the Copilot data page. **Not now** leaves it off; **Agree and turn on** stores the consent (`consentedAt`, `consentVersion`). A new consent text asks again.
+2. **Download the runtime**, once, if the installer did not bundle it. The card states the size, shows progress and has Cancel.
+3. **Sign in.** The card shows the device code (with a copy button) and opens github.com in your browser; after you authorize, it shows "Signed in as <login>" without a reload. The link is opened by the main process (`window.kvoxDesktop.openExternal`), which allows only `https://github.com/...` and refuses every other address.
+4. **Pick a model.** The card lists the models Copilot reports; the choice is stored.
+
+What runs where: notes, titles, knowledge extraction and the name check run on Copilot; Ask needs a model with tool calling, so with Copilot on and no OpenAI key the Ask entry in the top bar is disabled, with a tooltip that says to add an OpenAI key (the server reports it as `unavailableTasks` on `GET /api/desktop/ai`). With an OpenAI key saved, Ask runs on OpenAI. While Copilot is on, the page's footer ("Besides this device, KVox may connect only to ...") lists the Copilot hosts; switching it off removes them, and **Sign out** signs the runtime out.
+
+The end-to-end test `tests/e2e/copilot.spec.ts` walks this with the packages' mock transport (`KVOX_E2E_COPILOT_MOCK=1`, an unpackaged build only).
+
 ## Repository layout
 
 ```

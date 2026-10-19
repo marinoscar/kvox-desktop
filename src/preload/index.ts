@@ -35,6 +35,8 @@ const bridge: KvoxDesktopBridge = {
     ),
   themeMode: () => ipcRenderer.invoke('kvox:theme-mode'),
   setThemeMode: (mode) => ipcRenderer.invoke('kvox:set-theme-mode', mode),
+  // The main process opens only https://github.com/... (src/main/open-external.ts).
+  openExternal: (url) => ipcRenderer.invoke('kvox:open-external', typeof url === 'string' ? url : ''),
   onMenuNavigate: (handler) => subscribe(MENU_CHANNELS.navigate, (payload) => handler(payload)),
   onMenuToggleTheme: (handler) => subscribe(MENU_CHANNELS.toggleTheme, () => handler()),
   onMenuImport: (handler) => subscribe(MENU_CHANNELS.importFiles, () => handler()),
