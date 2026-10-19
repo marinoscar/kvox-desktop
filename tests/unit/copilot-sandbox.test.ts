@@ -4,6 +4,7 @@ import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { removeCopilotData } from '../../src/server/ai/copilot-data';
@@ -108,6 +109,28 @@ describe('the runtime environment', () => {
     expect(text).toContain('egress proxy on 127.0.0.1');
     expect(text).not.toContain(sandbox.proxyUrl);
     expect(text).not.toMatch(/kvox:[0-9a-f]{20}/);
+  });
+});
+
+describe('log redaction', () => {
+  it('passes every sandbox log line through redactTokens, a failing stop included', async () => {
+    const token = `gho_${'a1'.repeat(18)}`;
+    const { sandbox, lines } = await start({ stopRuntime: () => Promise.reject(new Error(`runtime said Bearer abcdef0123456789 and ${token}`)) });
+    await sandbox.stop();
+    const text = lines.join('\n');
+    expect(text).toContain('the runtime did not stop cleanly');
+    expect(text).not.toContain(token);
+    expect(text).not.toContain('abcdef0123456789');
+    expect(text).toContain('[redacted]');
+  });
+});
+
+describe('the allowlist', () => {
+  it('defaults to COPILOT_EGRESS_HOSTS and tunnels exactly those', async () => {
+    const { sandbox, lines } = await start({ allowedHosts: undefined });
+    expect(lines.join('\n')).toContain(`allowing ${COPILOT_EGRESS_HOSTS.join(', ')}`);
+    expect(sandbox.refused).toBe(0);
+    expect(COPILOT_EGRESS_HOSTS).toContain('api.githubcopilot.com');
   });
 });
 

@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { redactTokens } from '@marinoscar/kvox-ai/copilot';
+import { COPILOT_EGRESS_HOSTS, redactTokens } from '@marinoscar/kvox-ai/copilot';
 
 import { startEgressProxy, type EgressProxy } from './copilot-egress-proxy.js';
 import { reapRuntimeProcesses, type ReapOptions } from './copilot-process-reaper.js';
@@ -25,7 +25,6 @@ import { reapRuntimeProcesses, type ReapOptions } from './copilot-process-reaper
 //
 //   const sandbox = await startCopilotRuntimeSandbox({
 //     dataDirectory: folder.copilot,
-//     allowedHosts: COPILOT_EGRESS_HOSTS,
 //     log,
 //     stopRuntime: () => transport.stop(),
 //   });
@@ -68,12 +67,25 @@ const STRIPPED_ENV = [
   'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT',
 ] as const;
 
+/**
+ * The hosts the one-time runtime DOWNLOAD may reach (`prepareCopilotRuntime({ download: { allowedHosts } })`;
+ * the same list lets the server's in-process egress guard through for the download only): GitHub's release
+ * hosts. A release asset is a redirect from github.com to GitHub's object storage; every hop is checked
+ * against this list by `prepareCopilotRuntime`. Not part of {@link COPILOT_EGRESS_HOSTS}: the runtime
+ * itself never needs them once installed.
+ */
+export const COPILOT_RUNTIME_DOWNLOAD_HOSTS: readonly string[] = Object.freeze([
+  'github.com',
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com',
+]);
+
 /** Options of {@link startCopilotRuntimeSandbox}. */
 export interface CopilotSandboxOptions {
   /** `<userData>/copilot` (`DataFolder.copilot`). Created when missing. */
   dataDirectory: string;
-  /** The hostnames the runtime may reach: `COPILOT_EGRESS_HOSTS` of `@marinoscar/kvox-ai/copilot`. */
-  allowedHosts: readonly string[];
+  /** The hostnames the runtime may reach. Default: `COPILOT_EGRESS_HOSTS` of `@marinoscar/kvox-ai/copilot` (and nothing else). */
+  allowedHosts?: readonly string[];
   /** The server's log sink. Every line is passed through `redactTokens` first. */
   log: (line: string) => void;
   /** Asks the runtime to stop (the transport's `stop`). Awaited for `stopTimeoutMs`. */
@@ -162,7 +174,8 @@ export async function startCopilotRuntimeSandbox(options: CopilotSandboxOptions)
   if (!options.dataDirectory) throw new Error('The Copilot sandbox needs the Copilot data directory');
   const log = (line: string): void => options.log(redactTokens(line));
   await mkdir(join(options.dataDirectory, 'home'), { recursive: true });
-  const proxy: EgressProxy = await startEgressProxy({ allowedHosts: options.allowedHosts, log, connect: options.connect });
+  const allowedHosts = options.allowedHosts ?? COPILOT_EGRESS_HOSTS;
+  const proxy: EgressProxy = await startEgressProxy({ allowedHosts, log, connect: options.connect });
   const overrides = runtimeEnvOverrides(proxy.url, options.dataDirectory);
   const base = options.baseEnv ?? process.env;
   const env = merged(base, overrides);
@@ -219,6 +232,6 @@ export async function startCopilotRuntimeSandbox(options: CopilotSandboxOptions)
     },
   };
   running.add(sandbox);
-  log(`copilot: egress proxy on 127.0.0.1:${proxy.port}, allowing ${options.allowedHosts.join(', ')}`);
+  log(`copilot: egress proxy on 127.0.0.1:${proxy.port}, allowing ${allowedHosts.join(', ')}`);
   return sandbox;
 }
