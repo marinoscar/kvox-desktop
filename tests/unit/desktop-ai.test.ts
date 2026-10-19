@@ -290,6 +290,89 @@ describe('DesktopAi over the platform adapters', () => {
     expect((await ai.keyStatus('openai')).configured).toBe(false);
   });
 
+  // ---- The key test: POST /desktop/ai/keys/:provider/test ------------------------
+
+  describe('key test', () => {
+    const useMock = async (ai: DesktopAi) =>
+      ai.update({ provider: 'openai-compatible', openaiCompatible: { baseUrl: mock.baseUrl, model: 'mock-model', requiresKey: true } }, LOCAL_USER_ID);
+
+    it('verifies the typed key with the adapter, counts the models and never echoes the key', async () => {
+      const ai = desktopAi(providers.adapters);
+      await useMock(ai);
+      const result = await ai.testKey('openai-compatible', PLANTED_KEY);
+      expect(result).toMatchObject({ success: true, provider: 'openai-compatible', usedStoredKey: false, modelCount: 1 });
+      expect(result.checks.map((check) => [check.id, check.status])).toEqual([
+        ['credentials', 'passed'],
+        ['list_models', 'passed'],
+      ]);
+      expect(mock.requests.length).toBeGreaterThan(0);
+      for (const request of mock.requests) expect(request).toMatchObject({ authorization: `Bearer ${PLANTED_KEY}` });
+      expect(JSON.stringify(result)).not.toContain('PLANTEDkvox584');
+      // Testing stores nothing.
+      expect((await ai.keyStatus('openai-compatible')).configured).toBe(false);
+    });
+
+    it('re-checks the stored key when none is typed', async () => {
+      const ai = desktopAi(providers.adapters);
+      await useMock(ai);
+      await ai.setKey('openai-compatible', PLANTED_KEY, LOCAL_USER_ID);
+      const result = await new DesktopAiController(ai.port, ai, new EgressGuard({ logError: () => undefined })).testKey('openai-compatible', {});
+      expect(result).toMatchObject({ success: true, usedStoredKey: true });
+      expect(mock.requests[0]).toMatchObject({ authorization: `Bearer ${PLANTED_KEY}` });
+      expect(JSON.stringify(result)).not.toContain('PLANTEDkvox584');
+    });
+
+    it('answers an invalid key as a failed check (200, not an exception) without echoing it', async () => {
+      const ai = desktopAi(providers.adapters);
+      await useMock(ai);
+      mock.failWith(401); // the provider's body echoes the bearer token
+      const result = await ai.testKey('openai-compatible', PLANTED_KEY);
+      expect(result.success).toBe(false);
+      expect(result.checks[0]).toMatchObject({ id: 'credentials', status: 'failed', code: 'AI_KEY_INVALID' });
+      expect(JSON.stringify(result)).not.toContain('PLANTEDkvox584');
+    });
+
+    it('refuses a host the egress guard blocks, with a readable result and no request', async () => {
+      const logs: string[] = [];
+      const guard = new EgressGuard({ logError: (line) => logs.push(line) });
+      const ai = new DesktopAi({
+        settings,
+        secrets,
+        adapters: providers.adapters,
+        onAllowedHosts: (hosts) => guard.allow(hosts),
+        checkEgress: (host) => guard.check(host),
+      });
+      await ai.update({ provider: 'openai-compatible', openaiCompatible: { baseUrl: 'https://llm.corp.example:8443/v1', model: 'm' } }, LOCAL_USER_ID);
+      // Testing the slot that is not the active provider: its host is not on the allowlist.
+      const result = await ai.testKey('openai', PLANTED_KEY);
+      expect(result.success).toBe(false);
+      expect(result.checks[0]).toMatchObject({ status: 'failed', code: 'AI_PROVIDER_UNAVAILABLE' });
+      expect(result.checks[0]?.detail).toMatch(/blocked the connection to api\.openai\.com/);
+      expect(logs.join('\n')).toContain('egress blocked: api.openai.com');
+      expect(JSON.stringify(result) + logs.join('\n')).not.toContain('PLANTEDkvox584');
+      expect(mock.requests).toEqual([]);
+    });
+
+    it('answers a missing key or server URL as a failed check, and sends nothing', async () => {
+      const ai = desktopAi(providers.adapters);
+      expect((await ai.testKey('openai', undefined)).checks[0]).toMatchObject({ status: 'failed', code: 'AI_KEY_REQUIRED' });
+      const unconfigured = await ai.testKey('openai-compatible', PLANTED_KEY);
+      expect(unconfigured.success).toBe(false);
+      expect(unconfigured.checks[0]?.detail).toMatch(/base URL/);
+      expect(mock.requests).toEqual([]);
+    });
+
+    it('refuses a malformed typed key, an unknown slot and Copilot without echoing the key', async () => {
+      const ai = desktopAi(providers.adapters);
+      const malformed = (await ai.testKey('openai', 'sk-has spaces PLANTEDkvox584').catch((e: unknown) => e)) as Error & { getResponse(): unknown };
+      expect(malformed).toMatchObject({ status: 400 });
+      expect(JSON.stringify(malformed.getResponse()) + malformed.message).not.toContain('PLANTEDkvox584');
+      await expect(ai.testKey('copilot', PLANTED_KEY)).rejects.toMatchObject({ status: 400, response: { code: 'ai_provider_unavailable' } });
+      await expect(ai.testKey('nope', PLANTED_KEY)).rejects.toMatchObject({ status: 400 });
+      expect(mock.requests).toEqual([]);
+    });
+  });
+
   it('shows Copilot as a disabled slot with toolCalling=false, and refuses to select it or store its key', async () => {
     const ai = desktopAi(providers.adapters);
     const egress = new EgressGuard({ logError: () => undefined });

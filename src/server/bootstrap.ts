@@ -158,6 +158,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       settings,
       secrets,
       adapters: providers.adapters,
+      checkEgress: (host) => egress.check(host),
       onAllowedHosts: (hosts) => {
         egress.allow(hosts);
         options.log(`server: egress allowlist is loopback${hosts.length > 0 ? ` and ${hosts.join(', ')}` : ' only'}`);

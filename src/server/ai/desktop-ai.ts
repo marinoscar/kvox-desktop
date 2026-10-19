@@ -1,16 +1,20 @@
+import { randomUUID } from 'node:crypto';
+
 import { BadRequestException } from '@nestjs/common';
 
 import { createDirectRuntime, createKvoxAi, type KvoxAiModelState, type KvoxAiProviderKey, type KvoxTaskModelSource } from '@marinoscar/kvox-ai';
 import type { KvoxAiPort, KvoxSecretStatus, KvoxSecretsPort, KvoxSettingsPort } from '@marinoscar/kvox-api/ports';
-import { AI_KEYLESS_API_KEY, type AiProviderAdapter } from '@marinoscar/platform-ai-providers';
+import { AI_KEYLESS_API_KEY, type AiCallContext, type AiProviderAdapter } from '@marinoscar/platform-ai-providers';
 import { createOpenAiAdapter, createOpenAiCompatibleAdapter } from '@marinoscar/platform-ai-providers/openai';
 
+import { isLoopback } from '../egress-guard.js';
 import {
   AI_KEY_PURPOSE,
   DESKTOP_AI_NAMESPACE,
   DESKTOP_AI_PROVIDERS,
   SELECTABLE_AI_PROVIDER_IDS,
   activeModel,
+  OPENAI_HOST,
   allowedHostsFor,
   needsKey,
   type DesktopAiSettings,
@@ -57,6 +61,34 @@ export type DesktopAiKeyStatus = KvoxSecretStatus;
 /** An API key as `setKey` accepts it: visible ASCII, no spaces. */
 const API_KEY_PATTERN = /^[\x21-\x7e]{8,4096}$/;
 
+/** The longest a key test waits for the provider. */
+const KEY_TEST_TIMEOUT_MS = 15_000;
+
+/** One step of a key test (the platform's `AiProbeCheck` wire shape, which the shared key card renders). */
+export interface DesktopAiKeyTestCheck {
+  id: 'credentials' | 'list_models';
+  label: string;
+  status: 'passed' | 'failed' | 'skipped';
+  code: string;
+  detail: string;
+  error: string | null;
+}
+
+/**
+ * `POST /desktop/ai/keys/:provider/test`: the platform's `AiProbeResult` wire
+ * shape. It never carries the key. A failed test is an ordinary answer (HTTP 200,
+ * `success: false`), as on the web edition.
+ */
+export interface DesktopAiKeyTestResult {
+  success: boolean;
+  provider: string;
+  usedStoredKey: boolean;
+  modelCount: number | null;
+  smokeModelId: null;
+  checks: DesktopAiKeyTestCheck[];
+  attemptedAt: string;
+}
+
 /** The provider adapters. */
 export interface DesktopAiAdapters {
   adapters: Readonly<Record<string, AiProviderAdapter>>;
@@ -85,6 +117,12 @@ export interface DesktopAiOptions {
   onAllowedHosts: (hosts: string[]) => void;
   /** The request-timeout backstop; the package default (`DEFAULT_REQUEST_TIMEOUT_MS`) when absent. */
   requestTimeoutMs?: number;
+  /**
+   * The egress guard's check: a key test asks it before any request, so a
+   * refused host is answered with a readable result instead of a socket error.
+   * Absent: no pre-check (the guard still blocks the connection itself).
+   */
+  checkEgress?: (host: string) => Error | null;
 }
 
 /** Whether `id` names a provider slot with an adapter. */
@@ -161,6 +199,84 @@ export class DesktopAi {
     return this.keyStatus(id);
   }
 
+  /**
+   * Tests a key against the provider, server-side, through the adapter's
+   * `verifyKey` (and `listModels` for the count): the typed key when `apiKey` is
+   * given, else the stored one. The key goes to the provider and nowhere else: not
+   * into the result, an error or a log line. A rejected key, a refused host and an
+   * unreachable provider are answers (`success: false`), not exceptions; only a
+   * malformed typed key, an unknown slot or a slot with no adapter is a 400.
+   */
+  async testKey(provider: string, apiKey: unknown): Promise<DesktopAiKeyTestResult> {
+    const id = this.requireSelectable(provider);
+    const typed = apiKey === undefined || apiKey === null || apiKey === '' ? undefined : apiKey;
+    if (typed !== undefined && (typeof typed !== 'string' || !API_KEY_PATTERN.test(typed))) {
+      throw new BadRequestException({ message: 'An API key is 8 to 4096 visible characters with no spaces.', code: 'ai_key_invalid' });
+    }
+    const settings = await this.read();
+    const usedStoredKey = typed === undefined;
+    const outcome = (checks: DesktopAiKeyTestCheck[], modelCount: number | null = null): DesktopAiKeyTestResult => ({
+      success: checks[0]?.status === 'passed',
+      provider: id,
+      usedStoredKey,
+      modelCount,
+      smokeModelId: null,
+      checks,
+      attemptedAt: new Date().toISOString(),
+    });
+    const failed = (code: string, detail: string): DesktopAiKeyTestResult =>
+      outcome([{ id: 'credentials', label: 'Credentials', status: 'failed', code, detail, error: detail }]);
+
+    const target = this.targetHost(id, settings);
+    if (target === 'unconfigured') return failed('AI_PROVIDER_UNAVAILABLE', 'Enter the server base URL and save the AI settings first.');
+    const refused = target === null ? null : this.options.checkEgress?.(target);
+    if (refused) {
+      return failed(
+        'AI_PROVIDER_UNAVAILABLE',
+        `KVox blocked the connection to ${target}: only the AI provider chosen in Settings can be reached. Select this provider and save, then test again.`,
+      );
+    }
+
+    const secret = typed ?? (await this.keyFor(id))?.apiKey;
+    if (!secret) return failed('AI_KEY_REQUIRED', 'No API key is saved for this provider.');
+    const context = await this.callContext(id, secret, settings);
+    const adapter = this.options.adapters[id];
+    if (!context || !adapter) return failed('AI_PROVIDER_UNAVAILABLE', 'This provider is not configured.');
+    const scrub = (text: string): string => text.split(secret).join('…');
+    const withTimeout = (): AiCallContext => ({ ...context, signal: AbortSignal.timeout(KEY_TEST_TIMEOUT_MS) });
+
+    let verification;
+    try {
+      verification = await adapter.verifyKey(withTimeout());
+    } catch {
+      return failed('AI_PROVIDER_UNAVAILABLE', 'The provider could not be reached.');
+    }
+    if (!verification.ok) return failed(verification.code ?? 'AI_PROVIDER_UNAVAILABLE', scrub(verification.detail ?? 'The provider did not accept the request.'));
+
+    const credentials: DesktopAiKeyTestCheck = { id: 'credentials', label: 'Credentials', status: 'passed', code: 'OK', detail: '', error: null };
+    try {
+      const models = await adapter.listModels(withTimeout());
+      return outcome(
+        [credentials, { id: 'list_models', label: 'List models', status: 'passed', code: 'OK', detail: `${models.length} models`, error: null }],
+        models.length,
+      );
+    } catch {
+      return outcome([
+        credentials,
+        { id: 'list_models', label: 'List models', status: 'skipped', code: 'AI_PROVIDER_UNAVAILABLE', detail: 'The model list could not be read.', error: null },
+      ]);
+    }
+  }
+
+  /** The non-loopback host a call to `provider` reaches; `null` for this device; `'unconfigured'` with no server URL. */
+  private targetHost(provider: SelectableAiProviderId, settings: DesktopAiSettings): string | null | 'unconfigured' {
+    if (provider === 'openai') return OPENAI_HOST;
+    const baseUrl = settings.openaiCompatible.baseUrl;
+    if (!baseUrl) return 'unconfigured';
+    const host = new URL(baseUrl).hostname;
+    return isLoopback(host) ? null : host;
+  }
+
   private requireSelectable(provider: string): SelectableAiProviderId {
     if (isSelectableProvider(provider)) return provider;
     const slot = DESKTOP_AI_PROVIDERS.find((candidate) => candidate.id === provider);
@@ -186,6 +302,19 @@ export class DesktopAi {
       apiKey,
       baseUrl: compatible.baseUrl,
       providerSettings: { apiStyle: compatible.apiStyle, requiresKey: compatible.requiresKey },
+    };
+  }
+
+  /** The adapter call context for a key test: the same endpoint and settings a real call uses, under `apiKey`. */
+  private async callContext(provider: SelectableAiProviderId, apiKey: string, settings: DesktopAiSettings): Promise<AiCallContext | null> {
+    if (provider === 'openai') return { apiKey, requestId: randomUUID() };
+    const compatible = settings.openaiCompatible;
+    if (!compatible.baseUrl) return null;
+    return {
+      apiKey,
+      baseUrl: compatible.baseUrl,
+      providerSettings: { apiStyle: compatible.apiStyle, requiresKey: compatible.requiresKey },
+      requestId: randomUUID(),
     };
   }
 
