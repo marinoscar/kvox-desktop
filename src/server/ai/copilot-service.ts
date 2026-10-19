@@ -181,7 +181,10 @@ export class CopilotService {
   startDownload(): void {
     if (this.adapter || this.download) return;
     if (!this.options.host.canDownload) {
-      throw new CopilotConflictError('runtime_download_unavailable', 'This build of KVox has no GitHub Copilot runtime download. Install a build that includes the runtime.');
+      throw new CopilotConflictError(
+        'runtime_download_unavailable',
+        this.options.host.downloadUnavailableReason ?? 'This build of KVox has no GitHub Copilot runtime download. Install a build that includes the runtime.',
+      );
     }
     const generation = this.generation;
     const controller = new AbortController();

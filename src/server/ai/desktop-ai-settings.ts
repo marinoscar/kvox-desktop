@@ -188,7 +188,7 @@ export function allowedHostsFor(settings: DesktopAiSettings, options: { runtimeD
   }
   if (copilotActive(settings)) {
     for (const host of COPILOT_EGRESS_HOSTS) if (!hosts.includes(host)) hosts.push(host);
-    // The one-time runtime download (GitHub's release hosts), for as long as it runs.
+    // The one-time runtime download (the npm registry host), for as long as it runs.
     if (options.runtimeDownload) for (const host of COPILOT_RUNTIME_DOWNLOAD_HOSTS) if (!hosts.includes(host)) hosts.push(host);
   }
   return hosts;

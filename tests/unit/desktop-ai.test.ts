@@ -531,7 +531,7 @@ describe('GitHub Copilot add-on', () => {
     const status = await controller.copilotUpdate(PRINCIPAL, currentConsent());
     expect(status).toMatchObject({ enabled: true, signedIn: false, runtime: { state: 'missing', version: null, progress: null } });
     await expect(controller.copilotSignIn()).rejects.toMatchObject({ status: 409, response: { code: 'runtime_not_ready' } });
-    await expect(controller.copilotRuntimeDownload()).rejects.toMatchObject({ status: 409, response: { code: 'runtime_download_unavailable' } });
+    await expect(controller.copilotRuntimeDownload()).rejects.toMatchObject({ status: 409, response: { code: 'runtime_download_unavailable', message: expect.stringContaining('test-os-x64') } });
     // Generating is refused as "not configured": there is no Copilot to send to, and nothing is sent anywhere.
     await expect(collectText(ai)).rejects.toMatchObject({ errorClass: 'not_configured' });
   });
@@ -543,7 +543,7 @@ describe('GitHub Copilot add-on', () => {
     expect((await controller.copilotStatus()).runtime.state).toBe('missing');
     expect(harness.calls.downloads).toBe(0); // never without the user's action
 
-    // GitHub's release hosts are reachable for the download only.
+    // The registry host is reachable for the download only.
     const releaseHost = COPILOT_RUNTIME_DOWNLOAD_HOSTS.find((host) => !COPILOT_EGRESS_HOSTS.includes(host))!;
     expect(harness.guard.isAllowed(releaseHost)).toBe(false);
     const started = await controller.copilotRuntimeDownload();

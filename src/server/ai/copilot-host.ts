@@ -2,7 +2,6 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type {
-  CopilotRuntimeDownload,
   CopilotTransport,
   PreparedCopilotRuntime,
 } from '@marinoscar/kvox-ai/copilot';
@@ -10,6 +9,7 @@ import type {
 import type { DataFolder } from '../data-folder.js';
 import { removeCopilotData, type RemovedCopilotData } from './copilot-data.js';
 import { bundledRuntimePath } from './copilot-runtime-location.js';
+import { currentSdkPlatform, planRuntimeDownload, type PinnedRuntimeDownload } from './copilot-runtime-source.js';
 import { COPILOT_RUNTIME_DOWNLOAD_HOSTS, startCopilotRuntimeSandbox } from './copilot-sandbox.js';
 
 // =============================================================================
@@ -68,6 +68,8 @@ export interface CopilotHost {
   readonly dataDirectory: string;
   /** Whether the opt-in download can work at all (a download source is configured). */
   readonly canDownload: boolean;
+  /** Why {@link canDownload} is false, in words for the user (for example an unsupported platform). */
+  readonly downloadUnavailableReason?: string;
   readonly prepareRuntime: CopilotRuntimeProvider;
   readonly createTransport: CopilotTransportFactory;
   /**
@@ -91,19 +93,15 @@ export interface DefaultCopilotHostOptions {
   /**
    * Where the opt-in download comes from: `url` with a pinned `sha256` (or a `manifestUrl`), and the
    * archive `extract` hook. `allowedHosts` defaults to {@link COPILOT_RUNTIME_DOWNLOAD_HOSTS}.
-   * Absent: there is no download, and the download action answers 409 `runtime_download_unavailable`.
+   * Absent: the pinned registry package of this platform ({@link planRuntimeDownload}, marinoscar/kvox-desktop#32),
+   * or, on a platform GitHub ships no runtime for, no download. `false`: no download at all. Either way
+   * "no download" makes the download action answer 409 `runtime_download_unavailable`.
    */
-  download?: Omit<CopilotRuntimeDownload, 'onProgress' | 'signal' | 'allowedHosts'> & { allowedHosts?: readonly string[] };
-}
-
-/** The SDK's platform package suffix (`linux-x64`, `linuxmusl-x64`, `win32-arm64`, ...). */
-function sdkPlatform(): string {
-  let platform: string = process.platform;
-  if (platform === 'linux') {
-    const header = (process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } | undefined)?.header;
-    if (!header?.glibcVersionRuntime) platform = 'linuxmusl';
-  }
-  return `${platform}-${process.arch}`;
+  download?: (PinnedRuntimeDownload & { allowedHosts?: readonly string[] }) | false;
+  /** The SDK platform name to pick the pinned source for (`linux-x64`); default: the running process's. A test. */
+  platform?: string;
+  /** Replaces the global `fetch` for the download (a test with a local server). */
+  fetch?: typeof fetch;
 }
 
 /**
@@ -112,7 +110,7 @@ function sdkPlatform(): string {
  * packaged app finds none. `null` when the package is not installed.
  */
 export function findInstalledSdkRuntime(): string | null {
-  const platform = sdkPlatform();
+  const platform = currentSdkPlatform();
   try {
     const manifest = require.resolve(`@github/copilot-sdk-${platform}/package.json`);
     const launcher = join(manifest, '..', 'prebuilds', platform, process.platform === 'win32' ? 'copilot-runtime.exe' : 'copilot-runtime');
@@ -125,10 +123,14 @@ export function findInstalledSdkRuntime(): string | null {
 /** The in-process host: `prepareCopilotRuntime`, and `createSdkCopilotTransport` behind the egress sandbox. */
 export function createDefaultCopilotHost(options: DefaultCopilotHostOptions): CopilotHost {
   const dataDirectory = options.folder.copilot;
-  const canDownload = options.download?.url !== undefined || options.download?.manifestUrl !== undefined;
+  const plan = options.download === undefined ? planRuntimeDownload(options.platform) : undefined;
+  const download: DefaultCopilotHostOptions['download'] = options.download === undefined ? (plan?.supported ? plan.download : false) : options.download;
+  const canDownload = download !== false && (download.url !== undefined || download.manifestUrl !== undefined);
+  const unavailableReason = plan && !plan.supported ? plan.reason : undefined;
   return {
     dataDirectory,
     canDownload,
+    ...(unavailableReason ? { downloadUnavailableReason: unavailableReason } : {}),
     async prepareRuntime(request) {
       const { prepareCopilotRuntime } = await import('@marinoscar/kvox-ai/copilot');
       const bundled = options.bundledRuntimePath === undefined ? (bundledRuntimePath() ?? findInstalledSdkRuntime()) : options.bundledRuntimePath;
@@ -137,11 +139,12 @@ export function createDefaultCopilotHost(options: DefaultCopilotHostOptions): Co
         dataDirectory: request.dataDirectory,
         // A bundled launcher is always preferred (and never downloaded over); the download only when asked for.
         ...(bundled ? { bundledRuntimePath: bundled } : {}),
-        ...(request.download && !bundled && options.download
+        ...(options.fetch ? { fetch: options.fetch } : {}),
+        ...(request.download && !bundled && download
           ? {
               download: {
-                ...options.download,
-                allowedHosts: options.download.allowedHosts ?? COPILOT_RUNTIME_DOWNLOAD_HOSTS,
+                ...download,
+                allowedHosts: download.allowedHosts ?? COPILOT_RUNTIME_DOWNLOAD_HOSTS,
                 ...(request.onProgress ? { onProgress: request.onProgress } : {}),
                 ...(request.signal ? { signal: request.signal } : {}),
               },
