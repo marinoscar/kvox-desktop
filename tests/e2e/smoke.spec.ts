@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
 import { MOCK_NOTE_TEXT, configureAiProvider, openSettingsCard } from '../support/configure-ai';
+import { COPILOT_CONSENT_TITLE, COPILOT_SWITCH } from '../support/copilot-ui';
 import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
 
 // =============================================================================
@@ -191,7 +192,17 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   await page.getByRole('button', { name: /^AI provider/ }).click();
   await expect(page.getByRole('heading', { name: 'AI provider', level: 1 })).toBeVisible();
   await expect(page.getByText('KVox may connect only to: api.openai.com')).toBeVisible();
-  await expect(page.getByLabel(/GitHub Copilot/)).toBeDisabled();
+  // Copilot is off by default; turning it on shows the consent first, and "Not now" leaves it off
+  // (accepting, the download, the sign-in and a note on Copilot are in copilot.spec.ts).
+  const copilotSwitch = page.getByLabel(COPILOT_SWITCH);
+  await expect(copilotSwitch).not.toBeChecked();
+  await copilotSwitch.click();
+  const consent = page.getByRole('dialog', { name: COPILOT_CONSENT_TITLE });
+  await expect(consent).toBeVisible();
+  await consent.getByRole('button', { name: 'Not now' }).click();
+  await expect(consent).toBeHidden();
+  await expect(copilotSwitch).not.toBeChecked();
+  await expect(page.getByText('KVox may connect only to: api.openai.com')).toBeVisible();
   await configureAiProvider(page, { baseUrl: provider!.baseUrl, apiKey: PLANTED_KEY });
   await openSettingsCard(page, 'AI provider');
   await expect(page.getByText('KVox connects to nothing outside this device.')).toBeVisible();

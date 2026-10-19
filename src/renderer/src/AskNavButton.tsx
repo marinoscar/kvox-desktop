@@ -5,6 +5,8 @@ import Tooltip from '@mui/material/Tooltip';
 
 import { kvoxGet, useKvoxHost } from '@marinoscar/kvox-web/core/headless';
 
+import { ASK_UNAVAILABLE_TOOLTIP, isAskUnavailable, type UnavailableTask } from './askAvailability';
+
 // =============================================================================
 // The Ask entry of the top bar (marinoscar/kvox-desktop#22)
 // =============================================================================
@@ -17,22 +19,6 @@ import { kvoxGet, useKvoxHost } from '@marinoscar/kvox-web/core/headless';
 // file only reads it. It is read again on every navigation, so turning Copilot on
 // or saving an OpenAI key in Settings is reflected when the user comes back.
 // =============================================================================
-
-/** The tasks the server reports as unavailable (`GET /desktop/ai`). */
-interface UnavailableTask {
-  task: string;
-  reason: string;
-}
-
-/** The task id of Ask's answers. */
-export const ASK_TASK = 'ask.respond';
-
-export const ASK_UNAVAILABLE_TOOLTIP = 'Ask needs a provider with tool calling: add an OpenAI key';
-
-/** True when the server lists `ask.respond` as unavailable. */
-export function isAskUnavailable(tasks: readonly UnavailableTask[] | undefined): boolean {
-  return tasks?.some((entry) => entry.task === ASK_TASK) === true;
-}
 
 function useAskUnavailable(): boolean {
   const host = useKvoxHost();
