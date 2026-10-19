@@ -3,7 +3,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { join, resolve } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { startEgressProxy, type EgressProxy } from '../../src/server/ai/copilot-egress-proxy';
 import { runtimeEnvOverrides } from '../../src/server/ai/copilot-sandbox';
@@ -177,6 +177,6 @@ describe('the Copilot egress proxy', () => {
     const closed = new Promise<void>((resolve) => socket.on('close', () => resolve()));
     await proxy.stop();
     await closed;
-    expect(proxy.openTunnels).toBe(0);
+    await vi.waitFor(() => expect(proxy.openTunnels).toBe(0));
   });
 });

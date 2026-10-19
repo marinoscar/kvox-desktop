@@ -193,8 +193,10 @@ export async function startCopilotRuntimeSandbox(options: CopilotSandboxOptions)
     },
     apply() {
       if (stopping) return;
+      // Snapshot EVERY original first: on Windows `process.env` is case-insensitive, so HTTPS_PROXY and
+      // https_proxy are one variable and the second read would otherwise see the first write.
+      if (saved.size === 0) for (const name of Object.keys(overrides)) saved.set(name, process.env[name]);
       for (const [name, value] of Object.entries(overrides)) {
-        if (!saved.has(name)) saved.set(name, process.env[name]);
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;
       }
