@@ -157,8 +157,15 @@ export class DesktopAi {
   constructor(private readonly options: DesktopAiOptions) {
     options.secrets.registerPurpose(AI_KEY_PURPOSE, 'AI provider API keys');
     this.copilot = new CopilotService({ host: options.copilot ?? missingRuntimeHost(), log: options.log ?? (() => undefined) });
-    // `createDirectRuntime` reads this record on every call, so Copilot's adapter can come and go.
+    // `createDirectRuntime` reads this record on every call. The Copilot entry is a getter on the
+    // service, so the adapter appears when it is built (also after a later runtime download)
+    // and disappears when Copilot is switched off.
     this.adapters = { ...options.adapters };
+    Object.defineProperty(this.adapters, COPILOT_ID, {
+      enumerable: false,
+      configurable: true,
+      get: () => this.copilot.providerAdapter ?? undefined,
+    });
     this.primaryState = { load: () => this.modelState() };
     this.copilotState = { load: () => this.copilotModelState() };
     this.taskModels = { load: async (userId) => ((await this.serving('notes.generate')) === 'copilot' ? this.copilotState.load(userId) : this.primaryState.load(userId)) };
@@ -246,20 +253,8 @@ export class DesktopAi {
 
   /** Builds the Copilot adapter when Copilot is on and consented, and drops it otherwise. */
   private async applyCopilot(settings: DesktopAiSettings): Promise<void> {
-    if (copilotActive(settings)) {
-      await this.copilot.activate();
-      this.syncCopilotAdapter();
-    } else {
-      this.syncCopilotAdapter(true);
-      await this.copilot.deactivate();
-    }
-  }
-
-  /** Mirrors the service's adapter into the runtime's provider map. */
-  private syncCopilotAdapter(forceOff = false): void {
-    const adapter = forceOff ? null : this.copilot.providerAdapter;
-    if (adapter) this.adapters[COPILOT_ID] = adapter;
-    else delete this.adapters[COPILOT_ID];
+    if (copilotActive(settings)) await this.copilot.activate();
+    else await this.copilot.deactivate();
   }
 
   async keyStatus(provider: SelectableAiProviderId): Promise<DesktopAiKeyStatus> {

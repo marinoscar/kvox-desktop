@@ -466,6 +466,10 @@ describe('GitHub Copilot add-on', () => {
     harness.finishDownload();
     await vi_waitFor(async () => expect((await controller.copilotStatus()).runtime.state).toBe('ready'));
     expect(harness.calls.downloads).toBe(1);
+
+    // The adapter built after the download serves calls at once, with no restart.
+    harness.transport.queue({ kind: 'answer', text: '# After the download\n' });
+    expect(await collectText(harness.ai)).toBe('# After the download\n');
   });
 
   it('cancels a download, and turning Copilot off cancels it too', async () => {
