@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { createWriteStream, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
@@ -57,6 +57,18 @@ async function hashes(root: string): Promise<Record<string, string>> {
   return out;
 }
 
+/** The Copilot directory's three kinds of content. */
+function writeCopilotFiles(root: string, secret: string): void {
+  for (const [path, content] of [
+    ['home/auth/token.json', secret],
+    ['home/session-state/s1/events.jsonl', '{}'],
+    ['runtime/1.0.98/installed.json', '{}'],
+  ] as const) {
+    mkdirSync(join(root, path, '..'), { recursive: true });
+    writeFileSync(join(root, path), content);
+  }
+}
+
 function backupJobs(db: TestDatabase, onRestoreStaged: () => void = () => undefined): PgTableJobs {
   const jobs = new PgTableJobs(db.prisma, { dataDir: db.userDataDir, orgId: db.orgId, log: () => undefined });
   registerBackupJobs(jobs, {
@@ -107,12 +119,19 @@ describe('backup and restore', () => {
     }
     const vaultA = await hashes(folderA.vault);
     expect(Object.keys(vaultA)).toHaveLength(3);
+    // The Copilot runtime's private state (marinoscar/kvox-desktop#23): sign-in material, sessions and a downloaded runtime.
+    const copilotSecret = `copilot-sign-in-${randomBytes(8).toString('hex')}`;
+    writeCopilotFiles(folderA.copilot, copilotSecret);
 
     const archive = join(work, 'export', 'kvox.kvoxbackup');
     const exported = await runJob(backupJobs(a), BACKUP_EXPORT_JOB, archive);
     expect(exported).toMatchObject({ status: 'succeeded', lastError: null });
     expect(existsSync(archive)).toBe(true);
     expect(existsSync(`${archive}.partial`)).toBe(false);
+    // Nothing under copilot/ is in the archive: no entry, no file content (vault entries are stored uncompressed).
+    const bytes = readFileSync(archive).toString('latin1');
+    expect(bytes).not.toContain('copilot/');
+    expect(bytes).not.toContain(copilotSecret);
     await a.close({ keepFolder: true });
     open.pop();
 
@@ -120,6 +139,8 @@ describe('backup and restore', () => {
     const b = await openTestDatabase(join(work, 'profile-b'));
     open.push(b);
     expect(await b.prisma.note.count()).toBe(0);
+    const folderBeforeRestore = dataFolder(b.userDataDir);
+    writeCopilotFiles(folderBeforeRestore.copilot, 'profile-b-own-copilot-state');
     let restartRequested = 0;
     const restored = await runJob(backupJobs(b, () => (restartRequested += 1)), BACKUP_RESTORE_JOB, archive);
     expect(restored).toMatchObject({ status: 'succeeded' });
@@ -144,6 +165,11 @@ describe('backup and restore', () => {
     expect(await hashes(folderB.vault)).toEqual(vaultA);
     expect(existsSync(folderB.restorePending)).toBe(false);
     expect(existsSync(folderB.restorePrevious)).toBe(false);
+    // A restore replaces db/ and vault/ only: this machine's Copilot state is neither overwritten nor removed,
+    // and profile A's never arrived.
+    expect(readFileSync(join(folderB.copilot, 'home', 'auth', 'token.json'), 'utf8')).toBe('profile-b-own-copilot-state');
+    expect(existsSync(join(folderB.copilot, 'runtime', '1.0.98', 'installed.json'))).toBe(true);
+    expect(readFileSync(join(folderB.copilot, 'home', 'auth', 'token.json'), 'utf8')).not.toContain(copilotSecret);
   });
 
   it('refuses an archive with an entry outside its folder, a bad checksum or a newer database', async () => {
@@ -186,6 +212,15 @@ describe('backup and restore', () => {
       ['manifest.json', manifest([{ path: 'db.tar.gz', size: dump.length, sha256: sha(dump) }], [...known, '99999999999999_from_the_future'])],
     ]);
     await expect(stageRestore(folder, newer, known)).rejects.toThrow(/newer KVox Desktop/);
+
+    // An archive that carries the Copilot directory is not one this app wrote: refused, nothing staged.
+    const withCopilot = await write('with-copilot.kvoxbackup', [
+      ['db.tar.gz', dump],
+      ['copilot/home/auth/token.json', Buffer.from('{}')],
+      ['manifest.json', manifest([{ path: 'db.tar.gz', size: dump.length, sha256: sha(dump) }])],
+    ]);
+    await expect(stageRestore(folder, withCopilot, known)).rejects.toThrow(/unexpected entry "copilot\/home\/auth\/token.json"/);
+    expect(existsSync(folder.copilot)).toBe(false);
 
     await expect(stageRestore(folder, join(work, 'missing.kvoxbackup'), known)).rejects.toThrow(/does not exist/);
     expect(hasPendingRestore(folder)).toBe(false);

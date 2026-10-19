@@ -26,7 +26,9 @@ import type { DataFolder } from '../data-folder.js';
 //                   migrations the database had, and every file's size and
 //                   SHA-256
 //
-// NOT in a backup: `secrets.bin` (its blobs only decrypt for this OS user on
+// NOT in a backup: `copilot/` (the Copilot runtime's sessions, sign-in material and downloaded
+// runtime: marinoscar/kvox-desktop#23; the archive is built from `db/` and `vault/` only, a restore
+// replaces only those two, and an archive with any other entry is refused), `secrets.bin` (its blobs only decrypt for this OS user on
 // this machine; enter the API key again after a restore on another one),
 // `settings.json` (the shell's preferences) and `logs/`.
 //

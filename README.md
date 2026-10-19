@@ -78,6 +78,7 @@ Everything KVox keeps lives there, and nowhere else ([ADR-0004](https://github.c
 | `secrets.bin` | Saved API keys, each an Electron `safeStorage` blob (OS keychain, DPAPI or Secret Service) |
 | `settings.json` | The shell's own preferences: the plaintext-keys consent below, and "Check for updates" (off unless you turn it on) |
 | `tmp/` | Scratch files and upload parts; emptied at every start |
+| `copilot/` | Only if you turn on GitHub Copilot: its private state (`home/`: sessions and sign-in material, `work/`: an empty working directory) and the downloaded runtime (`runtime/<version>/`). Never in a backup (see [Network and privacy: GitHub Copilot](#network-and-privacy-github-copilot)) |
 
 Saved keys never rest in the clear. On Linux without a keyring, Electron falls back to its `basic_text` backend; KVox then refuses to save a key (HTTP 409, `secret_storage_plaintext`) and Settings > Data and privacy shows a warning. Keys are saved only after you set up a keyring or explicitly accept plaintext storage there.
 
@@ -92,6 +93,25 @@ No telemetry, no crash upload, no remote fonts. Both processes enforce it:
 - **Server**: a global undici dispatcher (for `fetch`) and a guard on every outgoing socket (`http`, `https`, `tls`, `net`) allow loopback and the configured AI provider's host only: `api.openai.com` for OpenAI, the base URL's host for an OpenAI-compatible server (none at all for one on this device). Saving the AI settings replaces the allowlist at once.
 
 Every blocked request is an error line in the log with the host only (`window: egress blocked: example.com`, `server: egress blocked: example.com`), plus a running count. The loopback server requires a per-launch token. For fully offline use, point the OpenAI-compatible base URL at a local model server (Ollama, LM Studio).
+
+### Network and privacy: GitHub Copilot
+
+GitHub Copilot is opt-in and off by default. While it is off there is no runtime process, no proxy listener and no Copilot traffic, and nothing is downloaded. What turning it on adds (marinoscar/kvox-desktop#23):
+
+- **A download, once.** The Copilot SDK drives a separate runtime of 130 to 175 MB per platform. The installer does not contain it: the first opt-in downloads it from GitHub's release hosts only (`github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, every redirect hop checked), refuses it unless its SHA-256 matches, and keeps it in `copilot/runtime/<version>`. An optional installer flavour bundles it instead (see [Packaging](#the-copilot-runtime)).
+- **A child process that cannot reach the internet by itself.** The runtime is a separate process, so the guard above cannot see its sockets. It is started with `HTTPS_PROXY` and `HTTP_PROXY` pointing at a proxy that KVox runs on `127.0.0.1` (a random port, protected by random credentials so no other program can use it) and an empty `NO_PROXY`. The proxy opens HTTPS tunnels to these hosts and refuses everything else (plain HTTP, other ports, IP addresses, sub-domains), logging each refusal with the host only. The server's own guard applies a second time to the tunnel:
+
+  | Host | For |
+  |---|---|
+  | `api.githubcopilot.com` | Model traffic: chat completions and the model listing |
+  | `github.com` | Sign-in |
+  | `api.github.com` | Account and entitlement calls, the Copilot token exchange |
+
+  The list is `COPILOT_EGRESS_HOSTS` of `@marinoscar/kvox-ai/copilot`. It was read from the runtime, not captured on the wire, so a refusal in the log (`copilot egress refused: CONNECT to <host>:443`) is how a missing host would show. The runtime does honour `HTTPS_PROXY` (checked against SDK 1.0.22, runtime 1.0.98: it sent `CONNECT api.github.com:443` with the proxy's credentials to a listener given as `HTTPS_PROXY`).
+- **Telemetry, honestly.** KVox never turns the SDK's OpenTelemetry on and sets the conventional off switches in the runtime's environment (`COPILOT_OTEL_ENABLED=false`, `OTEL_SDK_DISABLED=true`, `DO_NOT_TRACK=1`) and removes any OTLP endpoint and the tokens in `GH_TOKEN`, `GITHUB_TOKEN` and `COPILOT_GITHUB_TOKEN` from its environment. The runtime itself contains a GitHub product-telemetry service with **no documented off switch**, so KVox cannot promise that GitHub receives no usage data from a signed-in runtime. What it guarantees is where that traffic can go: only the three hosts above, because the proxy refuses the rest. Do not read "no telemetry" as covering Copilot.
+- **Sign-in scopes.** The runtime runs the sign-in itself; no token reaches KVox. Its authorization asks for broad GitHub scopes (`read:user read:org repo gist ...`) and the consent screen lists them.
+- **Stored where.** Everything the runtime keeps is in `copilot/`, which is excluded from **Export data** and never touched by **Restore**: a backup never carries sign-in material, and a restored profile signs in again. Runtime output is never written to the log unredacted (the log level is `none`, and every line the sandbox writes goes through the package's token redaction).
+- **Turning it off.** The runtime is stopped, the proxy closed and the environment put back; quitting the app does the same, and a runtime that does not stop is killed. "Remove Copilot data" deletes `copilot/` except the downloaded runtime, or including it if you choose.
 
 ### Export data and Restore
 
@@ -108,7 +128,7 @@ Settings > Data and privacy > **Export data…** writes one `.kvoxbackup` file w
 - A backup from a newer app version is refused.
 - The app then restarts its server, which swaps the data in before the database opens. Any failure puts the previous data back.
 
-Both run as background jobs. Saved API keys, `settings.json` and the logs are not in a backup: the keys only decrypt for this OS user on this machine, so enter them again after a restore.
+Both run as background jobs. The `copilot/` folder, saved API keys, `settings.json` and the logs are not in a backup: the keys only decrypt for this OS user on this machine, so enter them again after a restore.
 
 ## Importing
 
@@ -184,7 +204,7 @@ Settings > AI provider. `KVOX_AI` is the packages' own `createKvoxAi` over `crea
 |---|---|---|
 | OpenAI | Pick the model, paste the API key and **Save & verify**; it is stored in the OS keychain. **Test** and **Re-check** ask OpenAI whether the key works; **Remove** forgets it | Available |
 | OpenAI-compatible | Set the base URL, model and wire style (Chat Completions or Responses), and a key (same card) unless the server takes none (then the page says "No key needed") | Available |
-| GitHub Copilot | A disabled, opt-in slot: decided "go, without Ask" (marinoscar/kvox#581); its models will report no tool calling | Adapter not built yet |
+| GitHub Copilot | A disabled, opt-in slot: decided "go, without Ask" (marinoscar/kvox#581); its models will report no tool calling. The runtime download, its egress proxy and its data folder are in place (marinoscar/kvox-desktop#23); the settings and adapter loading are marinoscar/kvox-desktop#21 | Adapter not wired yet |
 
 The key block is the platform's `UserAiKeyCard` (`KeylessProviderCard` for a keyless server), the card KVox web shows. **Save & verify** and **Test** run on the local server, never in the window: `POST /api/desktop/ai/keys/:provider/test` calls the adapter's `verifyKey` (and `listModels` for the count) with the typed key, or the stored one when none is typed, and answers a verdict in the platform's `AiProbeResult` shape (HTTP 200; `success` is the answer). The key goes to the provider and nowhere else: not into the answer, an error or a log line. A key the provider rejects is not stored; a host the egress guard refuses (a provider other than the one saved in Settings) is a readable failed check, not a socket error.
 
@@ -332,6 +352,17 @@ Turning it off stops the timer and closes the session again. No user data is sen
 - **Application menu** (`src/main/menu.ts`). KVox's own, not Electron's default: File (New note, Import…, Settings, Quit), Edit, View (Toggle light/dark, zoom, full screen), Window and Help (About KVox with the Electron, Chromium, Node and `@marinoscar/*` versions, Open data folder, View licences, which opens the bundled `LICENSE.txt`). Reload and Developer Tools exist only when `!app.isPackaged`. No item opens a remote URL ([ADR-0004](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0004-desktop-data-local-only.md)); `tests/unit/menu.test.ts` walks the template for one. The menu sends the window `menu:navigate`, `menu:toggle-theme` and `menu:import` (`src/shared/protocol.ts`); the renderer validates the path (`parseMenuPath`) and acts (`src/renderer/src/MenuCommands.tsx`).
 - **macOS**: hardened runtime; one entitlement, `com.apple.security.cs.allow-jit` (V8 compiles JavaScript and WebAssembly, PGlite included, at run time). Not granted: unsigned executable memory, disabled library validation.
 - **Windows**: per-user NSIS (no admin), x64 and arm64 in one installer; the Prisma schema engine is x64 and runs emulated on arm64.
+
+### The Copilot runtime
+
+The GitHub Copilot runtime (130 to 175 MB per platform) is **not** in the default installer: it is downloaded on the first opt-in (see [Network and privacy: GitHub Copilot](#network-and-privacy-github-copilot)). `electron-builder.yml` excludes the SDK's per-platform runtime packages (`!node_modules/@github/copilot-sdk-*/**`; the SDK's own JavaScript stays, it is small). `node scripts/packaged-app.mjs verify` fails the build if the runtime is beside the archive or inside `app.asar`, or if any file outside the archive is over 100 MB; `tests/unit/packaging.test.ts` pins the same rules.
+
+An optional **with-copilot** flavour ships the runtime instead, for installs that cannot reach GitHub's release hosts. It is off by default and not built in CI:
+
+1. Stage the runtime of every platform and architecture you build in `build/copilot-runtime/<os>-<arch>/` (`<os>` is `win`, `mac` or `linux`; `<arch>` is `x64` or `arm64`): the `copilot-runtime` launcher (`copilot-runtime.exe` on Windows) and its sibling `runtime.node`, both from the platform's `@github/copilot-sdk-<platform>` package under `prebuilds/`.
+2. `node scripts/dist.mjs --config electron-builder.with-copilot.yml`. It extends the default config and adds one `extraResources` entry, which lands in `resources/copilot/`, outside the archive (a file inside an asar archive cannot be executed). The installers go to `release-with-copilot/`.
+
+`bundledRuntimePath()` (`src/server/ai/copilot-runtime-location.ts`) returns that launcher, or `undefined` in the default installer, and is the one value passed as `bundledRuntimePath` to `prepareCopilotRuntime`: `undefined` selects the download, a path selects the bundled runtime (which is then never downloaded over). `verify --allow-bundled-copilot` accepts the runtime in `resources/copilot/` and nowhere else.
 
 CI checks each build: `node scripts/packaged-app.mjs verify` (layout and fuses of the binary as it ships), then the e2e tests on a copy with `--inspect` back on (`test-copy`). On Ubuntu the `.deb` is installed and the tests run the installed app with the kernel's user-namespace restriction left on, which proves the AppArmor profile.
 

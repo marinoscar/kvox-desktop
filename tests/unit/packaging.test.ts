@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -16,7 +16,7 @@ import {
   resolveMark,
 } from '../../scripts/build-icons.mjs';
 import { signingPlan } from '../../scripts/dist.mjs';
-import { EXPECTED_FUSES } from '../../scripts/packaged-app.mjs';
+import { EXPECTED_FUSES, MAX_LOOSE_FILE_BYTES, copilotRuntimeProblems } from '../../scripts/packaged-app.mjs';
 import { unpackedSchemaEngine, workingDirectoryOf } from '../../src/server/database';
 
 // =============================================================================
@@ -146,6 +146,87 @@ describe('the asar layout', () => {
   it('leaves a development checkout alone', () => {
     expect(workingDirectoryOf(ROOT)).toBe(ROOT);
     expect(unpackedSchemaEngine(ROOT)).toBeUndefined();
+  });
+});
+
+// =============================================================================
+// The Copilot runtime is not in the installer (marinoscar/kvox-desktop#23)
+// =============================================================================
+//
+// `@github/copilot-sdk` drives a separate runtime of 130 to 175 MB per platform.
+// The default installer downloads it on the first opt-in, so it must carry neither
+// the runtime nor the per-platform npm packages that hold it. The optional
+// with-copilot flavour ships it as an extraResource, outside app.asar.
+// =============================================================================
+
+describe('the Copilot runtime stays out of the default installer', () => {
+  const flavour = read('electron-builder.with-copilot.yml');
+
+  it('excludes the per-platform runtime packages from the archive and ships no Copilot extraResource', () => {
+    expect(config).toContain('  - "!node_modules/@github/copilot-sdk-*/**"\n');
+    // The default config's extraResources (the window icon, the licence) carry nothing of Copilot.
+    const extra = /^extraResources:\n((?:(?: {2}.+| *#.*)\n)+)/m.exec(config)?.[1] ?? '';
+    expect(extra).not.toMatch(/copilot|runtime/i);
+    expect(config).not.toMatch(/^\s*- node_modules\/@github\/copilot-sdk\*\*/m);
+    // Nothing is unpacked from the SDK either: the runtime is never run from node_modules.
+    const unpack = /^asarUnpack:\n((?: {2}.+\n)+)/m.exec(config)?.[1] ?? '';
+    expect(unpack).not.toMatch(/copilot/);
+  });
+
+  it('keeps the runtime packages out of the app\'s own dependencies (the SDK pulls them in as optional ones)', () => {
+    const pkg = JSON.parse(read('package.json')) as { dependencies: Record<string, string>; optionalDependencies?: Record<string, string> };
+    expect(Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies }).filter((name) => name.startsWith('@github/copilot-sdk-'))).toEqual([]);
+  });
+
+  it('puts the bundled flavour behind its own config: the runtime is an extraResource in resources/copilot, outside the archive', () => {
+    expect(flavour).toContain('extends: electron-builder.yml');
+    expect(flavour).toMatch(/^extraResources:\n {2}- from: build\/copilot-runtime\/\$\{os\}-\$\{arch\}\n {4}to: copilot\n/m);
+    expect(flavour).toContain('output: release-with-copilot');
+    // The flavour does not touch `files` or `asarUnpack`: still no runtime inside app.asar.
+    expect(flavour).not.toMatch(/^(files|asarUnpack):/m);
+    expect(read('src', 'server', 'ai', 'copilot-runtime-location.ts')).toContain("BUNDLED_RUNTIME_FOLDER = 'copilot'");
+  });
+
+  describe('copilotRuntimeProblems (packaged-app.mjs verify)', () => {
+    let resources: string | undefined;
+    afterEach(() => resources && rmSync(resources, { recursive: true, force: true }));
+
+    function layout(files: Record<string, number>): string {
+      resources = mkdtempSync(join(tmpdir(), 'kvox-resources-'));
+      for (const [path, size] of Object.entries(files)) {
+        mkdirSync(join(resources, path, '..'), { recursive: true });
+        writeFileSync(join(resources, path), '');
+        if (size > 0) truncateSync(join(resources, path), size); // sparse: no disk used
+      }
+      return resources;
+    }
+    const RUNTIME = 140 * 1024 * 1024; // the real runtime.node is about 136 MB
+
+    it('passes a default installer layout', () => {
+      const dir = layout({ 'app.asar': 150 * 1024 * 1024, 'app.asar.unpacked/prisma.config.ts': 10, 'app.asar.unpacked/node_modules/@prisma/engines/schema-engine-debian': 20 * 1024 * 1024 });
+      expect(copilotRuntimeProblems(dir, { archiveEntries: ['/node_modules/@github/copilot-sdk/dist/index.js'] })).toEqual([]);
+    });
+
+    it('fails a runtime beside the archive, a platform package in the archive, and any oversize file', () => {
+      const loose = layout({ 'app.asar': 10, 'copilot/copilot-runtime': 500_000, 'copilot/runtime.node': RUNTIME });
+      expect(copilotRuntimeProblems(loose)).toEqual([
+        'the Copilot runtime is in the installer (resources/copilot/copilot-runtime)',
+        'the Copilot runtime is in the installer (resources/copilot/runtime.node)',
+      ]);
+      expect(copilotRuntimeProblems(layout({ 'app.asar': 10 }), { archiveEntries: ['/node_modules/@github/copilot-sdk-linux-x64/prebuilds/linux-x64/runtime.node'] })).toEqual([
+        'app.asar contains the Copilot runtime (/node_modules/@github/copilot-sdk-linux-x64/prebuilds/linux-x64/runtime.node)',
+      ]);
+      const big = layout({ 'app.asar': MAX_LOOSE_FILE_BYTES * 3, 'extra/model.bin': MAX_LOOSE_FILE_BYTES + 1 });
+      expect(copilotRuntimeProblems(big)).toEqual([`resources/extra/model.bin is ${Math.round((MAX_LOOSE_FILE_BYTES + 1) / 1048576)} MB, over the 100 MB size budget`]);
+    });
+
+    it('lets the with-copilot flavour carry the runtime in resources/copilot and nowhere else', () => {
+      const ok = layout({ 'app.asar': 10, 'copilot/copilot-runtime': 500_000, 'copilot/runtime.node': RUNTIME });
+      expect(copilotRuntimeProblems(ok, { allowBundled: true })).toEqual([]);
+      const elsewhere = layout({ 'app.asar': 10, 'app.asar.unpacked/runtime.node': RUNTIME });
+      expect(copilotRuntimeProblems(elsewhere, { allowBundled: true })).toHaveLength(1);
+      expect(copilotRuntimeProblems(layout({ 'app.asar': 10 }), { allowBundled: true, archiveEntries: ['/node_modules/@github/copilot-sdk-win32-x64/x'] })).toHaveLength(1);
+    });
   });
 });
 
