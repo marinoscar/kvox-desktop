@@ -75,7 +75,7 @@ export const DESKTOP_AI_PROVIDERS: readonly DesktopAiProviderSlot[] = [
     label: 'GitHub Copilot',
     implemented: true,
     toolCalling: false,
-    note: 'Opt-in add-on. Notes, knowledge extraction and the name check run on your GitHub Copilot subscription; Ask needs an OpenAI key.',
+    note: 'Opt-in add-on. Notes, knowledge extraction and the name check run on your own Copilot subscription; Ask needs an OpenAI key.',
   },
 ];
 
