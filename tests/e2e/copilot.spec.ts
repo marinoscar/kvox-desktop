@@ -103,9 +103,12 @@ test('Copilot: consent, runtime download, sign-in, a note on Copilot, sign-out',
   await card.getByRole('button', { name: 'Cancel' }).click();
   await expect(card.getByRole('button', { name: COPILOT_DOWNLOAD_BUTTON })).toBeVisible();
   await card.getByRole('button', { name: COPILOT_DOWNLOAD_BUTTON }).click();
+  await expect(card.getByText(/Downloading the Copilot runtime/)).toBeVisible();
 
   // ---- Ready: sign in with the device code -------------------------------------
-  await expect(card.getByRole('button', { name: COPILOT_SIGN_IN_BUTTON })).toBeVisible();
+  // (The sign-in button is shown during the download too, but needs the finished runtime.)
+  await expect(card.getByText(/Downloading the Copilot runtime/)).toBeHidden();
+  await expect(card.getByText(/The Copilot runtime is not installed/)).toBeHidden();
   await card.getByRole('button', { name: COPILOT_SIGN_IN_BUTTON }).click();
   const signIn = page.getByRole('dialog', { name: COPILOT_SIGN_IN_DIALOG });
   await expect(signIn.getByLabel(/Your code is ABCD-1234/)).toBeVisible();
@@ -149,7 +152,8 @@ test('Copilot: consent, runtime download, sign-in, a note on Copilot, sign-out',
   await expect(card.getByText(/Signed in as/)).toHaveCount(0);
   await toggle.click();
   await expect(toggle).not.toBeChecked();
-  await expect(page.getByText('KVox connects to nothing outside this device.')).toBeVisible();
+  // Back to the one host of the saved provider (OpenAI is the default); the Copilot hosts are gone.
+  await expect(page.getByText('KVox may connect only to: api.openai.com')).toBeVisible();
   await expect(page.getByText(/api\.githubcopilot\.com/)).toHaveCount(0);
   await expect(card.getByRole('button', { name: COPILOT_SIGN_IN_BUTTON })).toHaveCount(0);
 

@@ -135,6 +135,8 @@ function startServer(): Promise<DesktopConnection> {
       token,
       allowedOrigins: [rendererOrigin()],
       appVersion: app.getVersion(),
+      // The Copilot e2e test only; an installed app never honours the variable.
+      ...(!app.isPackaged && process.env.KVOX_E2E_COPILOT_MOCK === '1' ? { copilotE2eMock: true } : {}),
     };
     child.postMessage(start);
   });

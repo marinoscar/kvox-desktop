@@ -23,6 +23,8 @@ export type ToServer =
       token: string;
       allowedOrigins: string[];
       appVersion: string;
+      /** Test only (an unpackaged app with KVOX_E2E_COPILOT_MOCK=1): Copilot over a mock runtime and transport. */
+      copilotE2eMock?: boolean;
     }
   | { type: 'stop' }
   | { type: 'secrets-result'; id: number; ok: true; value: unknown }
