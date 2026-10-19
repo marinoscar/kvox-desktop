@@ -10,13 +10,15 @@ import MenuItem from '@mui/material/MenuItem';
 import Radio from '@mui/material/Radio';
 import RadioGroup from '@mui/material/RadioGroup';
 import Stack from '@mui/material/Stack';
-import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 
+import type { CopilotStatus } from '@marinoscar/kvox-contract/copilot';
 import { KvoxApiError, useKvoxHost } from '@marinoscar/kvox-web/core/headless';
 import type { AiProbeResult, UserAiKey } from '@marinoscar/platform-web/ai/headless';
 import { KeylessProviderCard, UserAiKeyCard } from '@marinoscar/platform-web/ai/ui';
+
+import { CopilotSection } from './CopilotSection';
 
 // =============================================================================
 // "AI provider": which provider runs the AI calls, its model and its key
@@ -32,9 +34,10 @@ import { KeylessProviderCard, UserAiKeyCard } from '@marinoscar/platform-web/ai/
 // characters, when), never the key, and the card clears the field once it is
 // saved. Testing a key is `POST /api/desktop/ai/keys/:provider/test`, answered
 // by the server through the adapter's `verifyKey`. The GitHub Copilot slot is
-// shown disabled until its adapter exists (marinoscar/kvox#581). Changing the
-// provider changes the one host the app may reach, shown below the form
-// (marinoscar/kvox#584).
+// an opt-in add-on below the form, the packaged `CopilotProviderCard`
+// (`CopilotSection.tsx`, marinoscar/kvox-desktop#22). Changing the provider
+// changes the one host the app may reach, shown below the form; with Copilot on,
+// the Copilot card's footer lists every host instead (marinoscar/kvox#584).
 // =============================================================================
 
 type ProviderId = 'openai' | 'openai-compatible';
@@ -43,7 +46,6 @@ interface AiSettings {
   provider: ProviderId | null;
   openai: { model: string };
   openaiCompatible: { baseUrl: string | null; model: string | null; apiStyle: 'chat_completions' | 'responses'; requiresKey: boolean };
-  copilot: { enabled: false };
 }
 
 interface KeyStatus {
@@ -77,6 +79,7 @@ export function AiProviderCard() {
   const [checks, setChecks] = useState<Record<string, KeyCheck>>({});
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [copilotStatus, setCopilotStatus] = useState<CopilotStatus | null>(null);
 
   const load = useCallback(async () => {
     const next = await host.http.request<SettingsView>('GET', '/desktop/ai/settings');
@@ -105,7 +108,6 @@ export function AiProviderCard() {
 
   const active = draft.provider;
   const slot = view.providers.find((provider) => provider.id === active);
-  const copilot = view.providers.find((provider) => provider.id === 'copilot');
   const compatible = draft.openaiCompatible;
   const keyNeeded = active === 'openai' || (active === 'openai-compatible' && compatible.requiresKey);
   const savedKey = slot?.key ?? null;
@@ -260,21 +262,17 @@ export function AiProviderCard() {
         <KeylessProviderCard provider={{ id: slot.id, displayName: slot.label }} />
       )}
 
-      {/* COPILOT SLOT: the Copilot epic replaces the disabled block below with its own card. */}
-      {copilot && (
-        <Stack spacing={0.5}>
-          <FormControlLabel control={<Switch checked={false} disabled />} label={`${copilot.label} (opt-in)`} />
-          <Typography variant="caption" color="text.secondary">
-            {copilot.note}
-          </Typography>
-        </Stack>
-      )}
+      {/* The add-on: its own card, consent and sign-in. Its status keeps the footer below true. */}
+      <CopilotSection onStatus={setCopilotStatus} />
 
-      <Typography variant="body2" color="text.secondary">
-        {view.allowedHosts.length > 0
-          ? `Besides this device, KVox may connect only to: ${view.allowedHosts.join(', ')}.`
-          : 'KVox connects to nothing outside this device.'}
-      </Typography>
+      {/* With Copilot on, the card's own footer lists every allowed host, so this one steps aside. */}
+      {copilotStatus?.enabled !== true && (
+        <Typography variant="body2" color="text.secondary">
+          {view.allowedHosts.length > 0
+            ? `Besides this device, KVox may connect only to: ${view.allowedHosts.join(', ')}.`
+            : 'KVox connects to nothing outside this device.'}
+        </Typography>
+      )}
       {outcome && (
         <Alert severity={outcome.severity} role={outcome.severity === 'error' ? 'alert' : 'status'}>
           {outcome.text}
