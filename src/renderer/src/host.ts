@@ -9,6 +9,7 @@ import {
   type KvoxResponseWithMeta,
   type KvoxWebHost,
 } from '@marinoscar/kvox-web/core/headless';
+import { defaultKvoxLinks } from '@marinoscar/kvox-web/shell';
 
 import type { DesktopConnection } from '../../shared/protocol';
 
@@ -117,12 +118,7 @@ export function createDesktopHost(connection: DesktopConnection, graphEnabled: b
       },
     },
     viewer: () => viewer,
-    links: {
-      transcript: (id) => `/transcripts/${id}`,
-      note: (id) => `/notes/${id}`,
-      entity: (id) => `/graph/entities/${id}`,
-      conversation: (id) => `/ask/${id}`,
-    },
+    links: defaultKvoxLinks,
     features: () => features,
   };
 }

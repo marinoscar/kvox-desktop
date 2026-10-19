@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import Alert from '@mui/material/Alert';
 
 import { kvoxGet, useKvoxHost } from '@marinoscar/kvox-web/core/headless';
+import { AiKeyRequired } from '@marinoscar/kvox-web/shell';
 import type { NotesAiAccess, NotesAiModel, NotesAiState } from '@marinoscar/kvox-web/notes/ui';
 
 // =============================================================================
@@ -40,8 +40,9 @@ function useDesktopAiState(): NotesAiState {
   return state;
 }
 
+// The shared "add your key" state; the AI provider card is the Settings page below.
 function DesktopAiKeyRequired() {
-  return <Alert severity="info">Configure an AI provider in Settings to generate notes.</Alert>;
+  return <AiKeyRequired settingsPath="/settings/ai" />;
 }
 
 export const desktopNotesAiAccess: NotesAiAccess = {
