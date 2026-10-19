@@ -57,17 +57,20 @@ export interface DesktopAiProviderSlot {
   implemented: boolean;
   /** Whether the slot's models may be offered tool calling (Ask). */
   toolCalling: boolean;
+  /** True for a slot the user may choose as THE provider; false for an add-on (Copilot), which has its own switch. */
+  primary: boolean;
   /** A one-line note the settings page shows under the slot. */
   note: string;
 }
 
 export const DESKTOP_AI_PROVIDERS: readonly DesktopAiProviderSlot[] = [
-  { id: 'openai', label: 'OpenAI', implemented: true, toolCalling: true, note: 'Uses api.openai.com with your OpenAI API key.' },
+  { id: 'openai', label: 'OpenAI', implemented: true, toolCalling: true, primary: true, note: 'Uses api.openai.com with your OpenAI API key.' },
   {
     id: 'openai-compatible',
     label: 'OpenAI-compatible server',
     implemented: true,
     toolCalling: true,
+    primary: true,
     note: 'A server that speaks the OpenAI API (Ollama, vLLM, LM Studio, a gateway). Only its host is reachable.',
   },
   {
@@ -75,6 +78,7 @@ export const DESKTOP_AI_PROVIDERS: readonly DesktopAiProviderSlot[] = [
     label: 'GitHub Copilot',
     implemented: true,
     toolCalling: false,
+    primary: false,
     note: 'Opt-in add-on. Notes, knowledge extraction and the name check run on your own Copilot subscription; Ask needs an OpenAI key.',
   },
 ];

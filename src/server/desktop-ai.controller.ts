@@ -84,6 +84,8 @@ export interface DesktopAiSettingsView {
     id: string;
     label: string;
     implemented: boolean;
+    /** False for an add-on (Copilot): not a choice of THE provider. */
+    primary: boolean;
     toolCalling: boolean;
     note: string;
     /** Whether calls need a stored key under the current settings (false for a keyless server). */

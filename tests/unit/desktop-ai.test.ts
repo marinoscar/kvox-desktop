@@ -452,7 +452,7 @@ describe('GitHub Copilot add-on', () => {
     const { ai, controller } = setup();
     const view = await controller.settings();
     expect(view.providers.map((p) => p.id)).toEqual(['openai', 'openai-compatible', 'copilot']);
-    expect(view.providers.find((p) => p.id === 'copilot')).toMatchObject({ implemented: true, toolCalling: false, key: null, needsKey: false });
+    expect(view.providers.find((p) => p.id === 'copilot')).toMatchObject({ implemented: true, primary: false, toolCalling: false, key: null, needsKey: false });
     expect(DESKTOP_AI_PROVIDERS.find((p) => p.id === 'copilot')).toMatchObject({ implemented: true, toolCalling: false });
 
     // It is an add-on: it cannot be the primary provider, and it has no API key to store.
