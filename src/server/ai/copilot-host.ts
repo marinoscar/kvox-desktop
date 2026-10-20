@@ -140,6 +140,8 @@ export function createDefaultCopilotHost(options: DefaultCopilotHostOptions): Co
         // A bundled launcher is always preferred (and never downloaded over); the download only when asked for.
         ...(bundled ? { bundledRuntimePath: bundled } : {}),
         ...(options.fetch ? { fetch: options.fetch } : {}),
+        // An ordinary start finds what an earlier download installed, by its pin, with no network.
+        ...(!request.download && !bundled && download ? { installed: download } : {}),
         ...(request.download && !bundled && download
           ? {
               download: {

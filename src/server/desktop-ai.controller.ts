@@ -4,7 +4,7 @@ import type { FastifyReply } from 'fastify';
 import { CurrentKvoxPrincipal, KvoxAuth } from '@marinoscar/kvox-api/core';
 import { KVOX_AI, type KvoxAiPort, type KvoxPrincipal } from '@marinoscar/kvox-api/ports';
 
-import { CopilotSettingsSchema, type CopilotSignInChallenge, type CopilotStatus } from '@marinoscar/kvox-contract/copilot';
+import { CopilotSettingsPatchSchema, type CopilotSignInChallenge, type CopilotStatus } from '@marinoscar/kvox-contract/copilot';
 import { CopilotConflictError } from './ai/copilot-service.js';
 import { DESKTOP_AI_PROVIDERS, needsKey, type DesktopAiSettings } from './ai/desktop-ai-settings.js';
 import { isSelectableProvider, type DesktopAi, type DesktopAiKeyStatus, type DesktopAiKeyTestResult } from './ai/desktop-ai.js';
@@ -169,7 +169,7 @@ export class DesktopAiController {
   @Patch('copilot')
   @KvoxAuth()
   async copilotUpdate(@CurrentKvoxPrincipal() principal: KvoxPrincipal, @Body() body: unknown): Promise<DesktopCopilotStatus> {
-    const parsed = CopilotSettingsSchema.partial().strict().safeParse(body);
+    const parsed = CopilotSettingsPatchSchema.safeParse(body);
     if (!parsed.success) {
       throw new HttpException(
         { code: 'ai_settings_invalid', message: parsed.error.issues.map((issue) => `${issue.path.map(String).join('.') || 'copilot'}: ${issue.message}`).join('; ') },
