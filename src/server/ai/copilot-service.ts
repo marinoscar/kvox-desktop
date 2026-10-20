@@ -337,7 +337,9 @@ export class CopilotService {
         return this.liveModels;
       }
     } catch (error) {
-      this.options.log(`copilot: could not list the models (${errorCheck(error) ?? 'error'}); using the fallback list`);
+      // The message is the package's (already redacted of tokens); the check alone said nothing when it was absent.
+      const detail = error instanceof Error ? copilot.redactTokens(error.message).slice(0, 200) : '';
+      this.options.log(`copilot: could not list the models (${errorCheck(error) ?? 'error'}${detail ? `: ${detail}` : ''}); using the fallback list`);
     }
     return fallback;
   }

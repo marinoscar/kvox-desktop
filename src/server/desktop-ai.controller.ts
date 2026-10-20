@@ -4,7 +4,7 @@ import type { FastifyReply } from 'fastify';
 import { CurrentKvoxPrincipal, KvoxAuth } from '@marinoscar/kvox-api/core';
 import { KVOX_AI, type KvoxAiPort, type KvoxPrincipal } from '@marinoscar/kvox-api/ports';
 
-import { CopilotSettingsSchema, type CopilotSignInChallenge, type CopilotStatus } from '@marinoscar/kvox-contract/copilot';
+import { CopilotSettingsSchema, type CopilotSettings, type CopilotSignInChallenge, type CopilotStatus } from '@marinoscar/kvox-contract/copilot';
 import { CopilotConflictError } from './ai/copilot-service.js';
 import { DESKTOP_AI_PROVIDERS, needsKey, type DesktopAiSettings } from './ai/desktop-ai-settings.js';
 import { isSelectableProvider, type DesktopAi, type DesktopAiKeyStatus, type DesktopAiKeyTestResult } from './ai/desktop-ai.js';
@@ -176,7 +176,12 @@ export class DesktopAiController {
         400,
       );
     }
-    await this.copilotCall(() => this.desktopAi.updateCopilot(parsed.data, principal.userId));
+    // ⚠ The schema's fields carry defaults, and Zod 4 applies a default even under `.partial()`: parsing
+    // `{ model }` yields `{ enabled: false, consentedAt: null, consentVersion: null, model }`, which as a
+    // merge patch would switch Copilot off and drop the consent. Only what the client SENT is patched.
+    const sent = new Set(Object.keys(body as object));
+    const patch = Object.fromEntries(Object.entries(parsed.data).filter(([key]) => sent.has(key))) as Partial<CopilotSettings>;
+    await this.copilotCall(() => this.desktopAi.updateCopilot(patch, principal.userId));
     return this.copilotView();
   }
 

@@ -8,8 +8,7 @@ import { z } from 'zod';
 
 import { createScriptedRuntime, describeKvoxAiConformance, type KvoxAiConformanceProvider } from '@marinoscar/kvox-ai/testing';
 import type { KvoxAiContext } from '@marinoscar/kvox-api/ports';
-import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
-import { COPILOT_RUNTIME_DOWNLOAD_HOSTS } from '../../src/server/ai/copilot-sandbox';
+import { COPILOT_RUNTIME_DOWNLOAD_HOSTS, COPILOT_RUNTIME_EGRESS_HOSTS as COPILOT_EGRESS_HOSTS } from '../../src/server/ai/copilot-sandbox';
 import type { AiProviderAdapter } from '@marinoscar/platform-ai-providers';
 
 import { COPILOT_CONSENT_VERSION } from '@marinoscar/kvox-contract/copilot';
@@ -513,6 +512,36 @@ describe('GitHub Copilot add-on', () => {
     expect(calls.prepared).toBe(1);
     expect(calls.transports).toBe(1);
     expect(providers.adapters.copilot).toBeUndefined(); // the runtime's map is the instance's own copy
+  });
+
+  it('changing the model leaves Copilot on and its consent in place (the schema defaults are never patched in)', async () => {
+    const { ai, controller } = setup();
+    await controller.copilotUpdate(PRINCIPAL, currentConsent());
+    const before = (await ai.read()).copilot;
+
+    const status = await controller.copilotUpdate(PRINCIPAL, { model: GPT });
+    expect(status).toMatchObject({ enabled: true });
+    expect((await ai.read()).copilot).toEqual({ ...before, model: GPT });
+    expect(ai.copilot.ready).toBe(true);
+
+    // Clearing the model is still a patch of the model alone, and an explicit switch-off still switches off.
+    await controller.copilotUpdate(PRINCIPAL, { model: null });
+    expect((await ai.read()).copilot).toEqual({ ...before, model: null });
+    expect(await controller.copilotUpdate(PRINCIPAL, { enabled: false })).toMatchObject({ enabled: false });
+    expect((await ai.read()).copilot).toMatchObject({ enabled: false, model: null, consentVersion: before.consentVersion });
+  });
+
+  it('lets the runtime reach the API host of each Copilot plan while Copilot is on, and none while it is off', async () => {
+    const { controller, guard } = setup();
+    const planHosts = ['api.individual.githubcopilot.com', 'api.business.githubcopilot.com', 'api.enterprise.githubcopilot.com'];
+    for (const host of planHosts) expect(guard.isAllowed(host)).toBe(false);
+    const status = await controller.copilotUpdate(PRINCIPAL, currentConsent());
+    for (const host of planHosts) {
+      expect(guard.isAllowed(host)).toBe(true);
+      expect(status.allowedHosts).toContain(host);
+    }
+    await controller.copilotUpdate(PRINCIPAL, { enabled: false });
+    for (const host of planHosts) expect(guard.isAllowed(host)).toBe(false);
   });
 
   it('asks again when the consent text changes: an older consent version is off', async () => {
