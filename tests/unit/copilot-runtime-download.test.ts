@@ -93,6 +93,29 @@ describe('the Copilot runtime download', () => {
     expect(server.calls).toHaveLength(1);
   });
 
+  it('finds a downloaded runtime again on an ordinary start (a restart), without any network and without asking to download', async () => {
+    const first = serve(() => ok());
+    const { f, host: h } = host({ download: downloadFromSource(FIXTURE), fetch: first.fetch });
+    const downloaded = await h.prepareRuntime({ dataDirectory: h.dataDirectory, download: true });
+
+    // A new process: a fresh host over the same data folder. Its start asks for NO download, and its fetch is never reached.
+    const restart = serve(() => {
+      throw new Error('the network must not be used');
+    });
+    const restarted = createDefaultCopilotHost({ folder: f, log: () => undefined, bundledRuntimePath: null, platform: PLATFORM, download: downloadFromSource(FIXTURE), fetch: restart.fetch });
+    const prepared = await restarted.prepareRuntime({ dataDirectory: restarted.dataDirectory, download: false });
+    expect(prepared).toMatchObject({ source: 'cached', runtimePath: downloaded.runtimePath, version: COPILOT_RUNTIME_PINNED_VERSION });
+    expect(restart.calls).toEqual([]);
+  });
+
+  it('reports "missing", and never downloads, on an ordinary start when nothing was downloaded', async () => {
+    const server = serve(() => ok());
+    const { host: h } = host({ download: downloadFromSource(FIXTURE), fetch: server.fetch });
+    await expect(h.prepareRuntime({ dataDirectory: h.dataDirectory, download: false })).rejects.toMatchObject({ response: { details: { check: 'runtime_missing' } } });
+    expect(server.calls).toEqual([]);
+    expect(runtimeLeftovers(h.dataDirectory)).toEqual([]);
+  });
+
   it('refuses a checksum mismatch and leaves nothing installed', async () => {
     const tampered = tgz(runtimePackage(PLATFORM).entries.map((e) => (e.name.endsWith('/copilot-runtime') ? { ...e, body: '#!evil\n' } : e)));
     const server = serve(() => ok(tampered));
