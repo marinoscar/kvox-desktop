@@ -154,6 +154,15 @@ linux:
     - target: deb
     - target: AppImage
   executableName: kvox-desktop
+  # ONE NAME on Linux, so the dock and the taskbar show the KVox icon for the
+  # running window (they showed a generic one). Electron sets the window's
+  # app_id (Wayland) and WM_CLASS (X11) from package.json `desktopName`; without
+  # it Electron 44 derives `kvox` from the product name, while the .deb installed
+  # kvox-desktop.desktop with StartupWMClass=KVox, and nothing matched.
+  # `desktopName: kvox-desktop.desktop` plus `syncDesktopName` makes the app_id,
+  # WM_CLASS, the entry's file name and its StartupWMClass all `kvox-desktop`
+  # (the file name it always had, so an upgrade replaces it in place).
+  syncDesktopName: true
   category: Office
   maintainer: Oscar Marin <oscar@marin.cr>
   synopsis: Offline-first meeting notes and a personal knowledge graph

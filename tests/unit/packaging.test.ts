@@ -311,6 +311,16 @@ describe('application icons', () => {
     expect(config).not.toMatch(/placeholder/i);
   });
 
+  it('gives the Linux window, its desktop entry and the entry\'s StartupWMClass one name, so the taskbar finds the icon', () => {
+    // Electron takes the window's app_id and WM_CLASS from `desktopName`; electron-builder names the
+    // entry and its StartupWMClass after it only with `syncDesktopName` (else the executable and the product name).
+    const pkg = JSON.parse(read('package.json')) as { desktopName?: string };
+    const executable = /^linux:\n(?:.*\n)*?  executableName: (\S+)$/m.exec(config)?.[1];
+    expect(executable).toBe('kvox-desktop');
+    expect(pkg.desktopName).toBe(`${executable}.desktop`);
+    expect(config).toMatch(/^linux:\n(?:.*\n)*?  syncDesktopName: true$/m);
+  });
+
   it('the generator refuses a file that is not the KVox mark and writes valid containers', () => {
     expect(() => assertKvoxMark('<svg xmlns="http://www.w3.org/2000/svg"><rect fill="#123456"/></svg>')).toThrow(/not the KVox mark/);
     const png = file('build', 'linux', 'icons', '16x16.png');

@@ -1,6 +1,7 @@
 {
   "name": "kvox-desktop",
   "productName": "KVox",
+  "desktopName": "kvox-desktop.desktop",
   "version": "0.1.0-rc.4",
   "private": true,
   "description": "KVox Desktop: single-user, offline-first meeting notes and a personal knowledge graph. A host of the @marinoscar/kvox-* packages.",
