@@ -8,7 +8,8 @@ import { z } from 'zod';
 
 import { createScriptedRuntime, describeKvoxAiConformance, type KvoxAiConformanceProvider } from '@marinoscar/kvox-ai/testing';
 import type { KvoxAiContext } from '@marinoscar/kvox-api/ports';
-import { COPILOT_RUNTIME_DOWNLOAD_HOSTS, COPILOT_RUNTIME_EGRESS_HOSTS as COPILOT_EGRESS_HOSTS } from '../../src/server/ai/copilot-sandbox';
+import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
+import { COPILOT_RUNTIME_DOWNLOAD_HOSTS } from '../../src/server/ai/copilot-sandbox';
 import type { AiProviderAdapter } from '@marinoscar/platform-ai-providers';
 
 import { COPILOT_CONSENT_VERSION } from '@marinoscar/kvox-contract/copilot';

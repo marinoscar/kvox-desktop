@@ -3,7 +3,7 @@ import { createServer, connect, type AddressInfo } from 'node:net';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { COPILOT_RUNTIME_EGRESS_HOSTS as COPILOT_EGRESS_HOSTS } from '../../src/server/ai/copilot-sandbox';
+import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
 
 import { COPILOT_CONSENT_VERSION } from '@marinoscar/kvox-contract/copilot';
 import { DEFAULT_DESKTOP_AI_SETTINGS, allowedHostsFor, type DesktopAiSettings } from '../../src/server/ai/desktop-ai-settings';
@@ -110,7 +110,7 @@ describe('the Copilot hosts follow the setting (marinoscar/kvox-desktop#21)', ()
     copilot: { enabled: true, consentedAt: '2026-10-19T00:00:00.000Z', consentVersion: COPILOT_CONSENT_VERSION, model: null, ...patch },
   });
 
-  it('adds exactly COPILOT_RUNTIME_EGRESS_HOSTS while Copilot is on, next to the primary provider, and drops them when it is off', () => {
+  it('adds exactly COPILOT_EGRESS_HOSTS while Copilot is on, next to the primary provider, and drops them when it is off', () => {
     expect(allowedHostsFor(DEFAULT_DESKTOP_AI_SETTINGS)).toEqual(['api.openai.com']);
     expect(allowedHostsFor(on())).toEqual(['api.openai.com', ...COPILOT_EGRESS_HOSTS]);
     expect(allowedHostsFor({ ...on(), provider: null })).toEqual([...COPILOT_EGRESS_HOSTS]);

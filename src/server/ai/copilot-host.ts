@@ -5,7 +5,6 @@ import type {
   CopilotTransport,
   PreparedCopilotRuntime,
 } from '@marinoscar/kvox-ai/copilot';
-import { AiError } from '@marinoscar/platform-ai-providers';
 
 import type { DataFolder } from '../data-folder.js';
 import { removeCopilotData, type RemovedCopilotData } from './copilot-data.js';
@@ -136,39 +135,24 @@ export function createDefaultCopilotHost(options: DefaultCopilotHostOptions): Co
       const { prepareCopilotRuntime } = await import('@marinoscar/kvox-ai/copilot');
       const bundled = options.bundledRuntimePath === undefined ? (bundledRuntimePath() ?? findInstalledSdkRuntime()) : options.bundledRuntimePath;
       if (request.download && !canDownload) throw new CopilotDownloadUnavailableError();
-      // An ordinary start (no download asked for) must still find a runtime an earlier download installed:
-      // `prepareCopilotRuntime` looks at its install record only when it is given a download source. So the
-      // source goes in, with a `fetch` that refuses to touch the network: an install on disk is reused
-      // (`cached`), and no install is "missing", never a download the user did not ask for.
-      const reuseOnly = !request.download && !bundled && canDownload;
-      let wouldDownload = false;
-      const offlineFetch: typeof fetch = async () => {
-        wouldDownload = true;
-        throw new Error('The Copilot runtime is not downloaded yet.');
-      };
-      try {
-        return await prepareCopilotRuntime({
-          dataDirectory: request.dataDirectory,
-          // A bundled launcher is always preferred (and never downloaded over); the download only when asked for.
-          ...(bundled ? { bundledRuntimePath: bundled } : {}),
-          ...(reuseOnly ? { fetch: offlineFetch } : options.fetch ? { fetch: options.fetch } : {}),
-          ...((request.download || reuseOnly) && !bundled && download
-            ? {
-                download: {
-                  ...download,
-                  allowedHosts: download.allowedHosts ?? COPILOT_RUNTIME_DOWNLOAD_HOSTS,
-                  ...(request.onProgress ? { onProgress: request.onProgress } : {}),
-                  ...(request.signal ? { signal: request.signal } : {}),
-                },
-              }
-            : {}),
-        });
-      } catch (error) {
-        if (reuseOnly && wouldDownload) {
-          throw new AiError('AI_PROVIDER_UNAVAILABLE', 'No GitHub Copilot runtime is installed.', { details: { check: 'runtime_missing' } });
-        }
-        throw error;
-      }
+      return prepareCopilotRuntime({
+        dataDirectory: request.dataDirectory,
+        // A bundled launcher is always preferred (and never downloaded over); the download only when asked for.
+        ...(bundled ? { bundledRuntimePath: bundled } : {}),
+        ...(options.fetch ? { fetch: options.fetch } : {}),
+        // An ordinary start finds what an earlier download installed, by its pin, with no network.
+        ...(!request.download && !bundled && download ? { installed: download } : {}),
+        ...(request.download && !bundled && download
+          ? {
+              download: {
+                ...download,
+                allowedHosts: download.allowedHosts ?? COPILOT_RUNTIME_DOWNLOAD_HOSTS,
+                ...(request.onProgress ? { onProgress: request.onProgress } : {}),
+                ...(request.signal ? { signal: request.signal } : {}),
+              },
+            }
+          : {}),
+      });
     },
     async createTransport(runtime) {
       const { createSdkCopilotTransport } = await import('@marinoscar/kvox-ai/copilot');

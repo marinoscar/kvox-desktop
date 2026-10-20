@@ -1,10 +1,11 @@
 import { z } from 'zod';
 
+import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
 import { COPILOT_CONSENT_VERSION, COPILOT_DEFAULT_SETTINGS, CopilotSettingsSchema, type CopilotSettings } from '@marinoscar/kvox-contract/copilot';
 import type { KvoxSettingsNamespaceDef } from '@marinoscar/kvox-api/ports';
 
 import { isLoopback } from '../egress-guard.js';
-import { COPILOT_RUNTIME_DOWNLOAD_HOSTS, COPILOT_RUNTIME_EGRESS_HOSTS } from './copilot-sandbox.js';
+import { COPILOT_RUNTIME_DOWNLOAD_HOSTS } from './copilot-sandbox.js';
 
 // =============================================================================
 // The AI provider settings of KVox Desktop (marinoscar/kvox#584)
@@ -186,7 +187,7 @@ export function allowedHostsFor(settings: DesktopAiSettings, options: { runtimeD
     if (!isLoopback(host)) hosts.push(host);
   }
   if (copilotActive(settings)) {
-    for (const host of COPILOT_RUNTIME_EGRESS_HOSTS) if (!hosts.includes(host)) hosts.push(host);
+    for (const host of COPILOT_EGRESS_HOSTS) if (!hosts.includes(host)) hosts.push(host);
     // The one-time runtime download (the npm registry host), for as long as it runs.
     if (options.runtimeDownload) for (const host of COPILOT_RUNTIME_DOWNLOAD_HOSTS) if (!hosts.includes(host)) hosts.push(host);
   }

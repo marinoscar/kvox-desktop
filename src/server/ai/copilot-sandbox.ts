@@ -68,24 +68,6 @@ const STRIPPED_ENV = [
 ] as const;
 
 /**
- * The hosts the Copilot runtime may reach: the package's list, plus the API host of each Copilot plan.
- *
- * The package's list names `api.githubcopilot.com` only, and says itself that it was inferred from the
- * binary and not measured. The runtime does not use that host for a signed-in account: it reads the
- * account's `endpoints.api` from `api.github.com/copilot_internal/user`, which is
- * `api.individual.githubcopilot.com` for an individual plan, `api.business.githubcopilot.com` for a
- * business one and `api.enterprise.githubcopilot.com` for an enterprise one. Refused, the model listing
- * fails (the card falls back to its four built-in models) and so does every call. Exact names, no wildcard,
- * and no telemetry host (`endpoints.telemetry`): ADR-0004.
- */
-export const COPILOT_RUNTIME_EGRESS_HOSTS: readonly string[] = Object.freeze([
-  ...COPILOT_EGRESS_HOSTS,
-  'api.individual.githubcopilot.com',
-  'api.business.githubcopilot.com',
-  'api.enterprise.githubcopilot.com',
-]);
-
-/**
  * The hosts the one-time runtime DOWNLOAD may reach (`prepareCopilotRuntime({ download: { allowedHosts } })`;
  * the same list lets the server's in-process egress guard through for the download only). The runtime is
  * the npm package `@github/copilot-sdk-<platform>` (marinoscar/kvox-desktop#32), and the registry serves
@@ -100,7 +82,7 @@ export const COPILOT_RUNTIME_DOWNLOAD_HOSTS: readonly string[] = Object.freeze([
 export interface CopilotSandboxOptions {
   /** `<userData>/copilot` (`DataFolder.copilot`). Created when missing. */
   dataDirectory: string;
-  /** The hostnames the runtime may reach. Default: {@link COPILOT_RUNTIME_EGRESS_HOSTS} (and nothing else). */
+  /** The hostnames the runtime may reach. Default: `COPILOT_EGRESS_HOSTS` of `@marinoscar/kvox-ai/copilot` (and nothing else). */
   allowedHosts?: readonly string[];
   /** The server's log sink. Every line is passed through `redactTokens` first. */
   log: (line: string) => void;
@@ -190,7 +172,7 @@ export async function startCopilotRuntimeSandbox(options: CopilotSandboxOptions)
   if (!options.dataDirectory) throw new Error('The Copilot sandbox needs the Copilot data directory');
   const log = (line: string): void => options.log(redactTokens(line));
   await mkdir(join(options.dataDirectory, 'home'), { recursive: true });
-  const allowedHosts = options.allowedHosts ?? COPILOT_RUNTIME_EGRESS_HOSTS;
+  const allowedHosts = options.allowedHosts ?? COPILOT_EGRESS_HOSTS;
   const proxy: EgressProxy = await startEgressProxy({ allowedHosts, log, connect: options.connect });
   const overrides = runtimeEnvOverrides(proxy.url, options.dataDirectory);
   const base = options.baseEnv ?? process.env;
