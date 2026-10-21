@@ -201,7 +201,7 @@ export class CopilotService {
   /** "Remove Copilot data": only with Copilot off and the runtime stopped. */
   async removeData(options: { includeRuntime?: boolean }): Promise<{ removed: string[]; keptRuntime: boolean }> {
     if (this.adapter || this.download) {
-      throw new CopilotConflictError('copilot_enabled', 'Switch GitHub Copilot off before removing its data.');
+      throw new CopilotConflictError('copilot_enabled', 'Choose another AI provider before removing GitHub Copilot data.');
     }
     return (await this.options.host.removeData?.(options)) ?? { removed: [], keptRuntime: false };
   }
