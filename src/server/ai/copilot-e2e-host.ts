@@ -13,13 +13,18 @@ import type { CopilotHost } from './copilot-host.js';
 // so an installed app never reaches this file. It stands in for the two things
 // that need the outside world: the runtime (missing until a short, visible
 // "download" has run) and the transport (the packages' own mock: signed out until
-// a delayed sign-in finishes, then a note answer). Nothing here opens a socket.
+// a delayed sign-in finishes, then a note answer, or for an Ask turn one `search`
+// tool call and then an answer, so the turn crosses the adapter's tool bridge).
+// Nothing here opens a socket.
 // It holds no Copilot logic: the lifecycle, the consent and the routing are the
 // real ones (`copilot-service.ts`).
 // =============================================================================
 
 /** The text every note generated through this host carries (the spec looks for it). */
 export const E2E_COPILOT_NOTE_TEXT = '# Meeting notes\n\n- Joe sends the budget by Friday.\n- Generated on Copilot: copilotzebra.\n';
+
+/** The answer every Ask turn through this host ends with (the spec looks for it). */
+export const E2E_COPILOT_ASK_TEXT = 'Joe sends the budget by Friday. Answered on Copilot: copilotyak.';
 
 /** How long the fake download and the fake sign-in take, so the spec can see their states. */
 const DOWNLOAD_MS = 4_000;
@@ -44,7 +49,14 @@ export function createE2eCopilotHost(dataDirectory: string): CopilotHost {
   transport.scriptSignIn({
     challenge: { kind: 'device', userCode: 'ABCD-1234', verificationUri: 'https://github.com/login/device', expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() },
   });
-  transport.onSend(() => ({ kind: 'answer', text: E2E_COPILOT_NOTE_TEXT }));
+  transport.onSend((send) => {
+    // An Ask step is the one call that declares tools: its first send calls `search` once; the
+    // runtime's next model call (after the loop's tool output came back through the held session) answers.
+    const ask = send.config.tools?.some((tool) => tool.name === 'search') === true;
+    if (!ask) return { kind: 'answer', text: E2E_COPILOT_NOTE_TEXT };
+    if (send.continuation) return { kind: 'answer', text: E2E_COPILOT_ASK_TEXT };
+    return { kind: 'toolCalls', calls: [{ name: 'search', arguments: { query: 'budget' } }] };
+  });
   // The user takes a moment to authorize: the dialog with the code stays visible meanwhile.
   const waitForSignIn = transport.waitForSignIn.bind(transport);
   transport.waitForSignIn = async (signal) => {

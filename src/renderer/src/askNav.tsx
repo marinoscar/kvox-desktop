@@ -10,8 +10,8 @@ import { ASK_UNAVAILABLE_TOOLTIP, isAskUnavailable, type UnavailableTask } from 
 // =============================================================================
 //
 // `GET /api/desktop/ai` reports `unavailableTasks`: the tasks no provider can serve now, each with the missing
-// capability (Ask needs tool calling, which a Copilot-only setup lacks). The task list is the server's; this
-// file only reads it. It is read again on every navigation, so turning Copilot on or saving an OpenAI key in
+// capability (Ask needs tool calling, which a Copilot model the live listing marks as tool-less lacks). The task
+// list is the server's; this file only reads it. It is read again on every navigation, so turning Copilot on or saving an OpenAI key in
 // Settings is reflected when the user comes back.
 //
 // The shell's destination has no "disabled" state, so the Ask row is flagged instead: a badge whose `title`

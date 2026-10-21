@@ -77,7 +77,7 @@ export interface DesktopAiState {
   keyConfigured: boolean;
   models: Array<{ id: string; label: string }>;
   defaultModel: string | null;
-  /** Tasks no provider can serve now, each with the missing capability (Ask without an OpenAI key while Copilot is on). */
+  /** Tasks no provider can serve now, each with the missing capability (Ask on a Copilot model that cannot call tools, with no OpenAI key). */
   unavailableTasks: Array<{ task: string; reason: 'needs_tool_calling' | 'needs_embeddings' }>;
 }
 

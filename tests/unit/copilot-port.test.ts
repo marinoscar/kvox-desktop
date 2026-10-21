@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { COPILOT_CONSENT_VERSION } from '@marinoscar/kvox-contract/copilot';
 import type { KvoxWebHost } from '@marinoscar/kvox-web/core/headless';
 
 import { ASK_TASK, isAskUnavailable } from '../../src/renderer/src/askAvailability';
@@ -39,16 +40,16 @@ function fakeHost(answer: (call: Call) => unknown) {
 describe('createCopilotPort', () => {
   it('reads the status and the stored setting from the server', async () => {
     const { host, calls } = fakeHost((call) =>
-      call.path === '/desktop/ai/settings' ? { settings: { copilot: { enabled: true, consentedAt: 'x', consentVersion: '1', model: 'm' } } } : status('ready'),
+      call.path === '/desktop/ai/settings' ? { settings: { copilot: { enabled: true, consentedAt: 'x', consentVersion: COPILOT_CONSENT_VERSION, model: 'm' } } } : status('ready'),
     );
     const port = createCopilotPort(host);
     expect((await port.getStatus()).runtime.state).toBe('ready');
-    expect(await port.getSettings()).toEqual({ enabled: true, consentedAt: 'x', consentVersion: '1', model: 'm' });
+    expect(await port.getSettings()).toEqual({ enabled: true, consentedAt: 'x', consentVersion: COPILOT_CONSENT_VERSION, model: 'm' });
     expect(calls.map((call) => `${call.method} ${call.path}`)).toEqual(['GET /desktop/ai/copilot/status', 'GET /desktop/ai/settings']);
   });
 
   it('PATCHes the consent patch as given and resolves to the stored setting', async () => {
-    const patch = { enabled: true, consentedAt: '2026-10-19T00:00:00.000Z', consentVersion: '1' };
+    const patch = { enabled: true, consentedAt: '2026-10-19T00:00:00.000Z', consentVersion: COPILOT_CONSENT_VERSION };
     const { host, calls } = fakeHost((call) => (call.method === 'PATCH' ? status('ready') : { settings: { copilot: { ...patch, model: null } } }));
     expect(await createCopilotPort(host).update(patch)).toEqual({ ...patch, model: null });
     expect(calls[0]).toMatchObject({ method: 'PATCH', path: '/desktop/ai/copilot', init: { body: patch } });

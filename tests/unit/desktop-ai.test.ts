@@ -52,8 +52,10 @@ import { fakeCipher, openTestDatabase, type TestDatabase } from './support/datab
 //      response, log line, error or file outside the encrypted blob.
 //   5. COPILOT IS ONE OF THREE PROVIDERS (marinoscar/kvox-desktop#21): the
 //      provider is never off; Copilot is not even loaded until it is chosen, is
-//      never chosen without consent, is routed by capability (notes on Copilot,
-//      Ask on OpenAI when a key is stored, else reported unavailable), is signed
+//      never chosen without consent, is routed by capability (notes and Ask on
+//      Copilot, Ask through the adapter's tool bridge; the embeddings of search
+//      by meaning on OpenAI when a key is stored), closes the bridge's held
+//      sessions when it stops, is signed
 //      in through the endpoints, and holds no token anywhere. Stored settings
 //      from the add-on days migrate on read.
 // =============================================================================
@@ -508,11 +510,11 @@ describe('GitHub Copilot as a provider', () => {
     const view = await controller.settings();
     expect(view.providers.map((p) => p.id)).toEqual(['openai', 'openai-compatible', 'copilot']);
     expect(view.providers.map((p) => p.primary)).toEqual([true, true, true]);
-    expect(view.providers.find((p) => p.id === 'copilot')).toMatchObject({ implemented: true, primary: true, toolCalling: false, key: null, needsKey: false });
+    expect(view.providers.find((p) => p.id === 'copilot')).toMatchObject({ implemented: true, primary: true, toolCalling: true, key: null, needsKey: false });
     expect(DESKTOP_AI_PROVIDERS.find((p) => p.id === 'copilot')).toMatchObject({
       implemented: true,
-      toolCalling: false,
-      note: 'Your own GitHub Copilot subscription, after you sign in. Ask needs an OpenAI API key.',
+      toolCalling: true,
+      note: 'Your own GitHub Copilot subscription, after you sign in. Search by meaning needs an OpenAI API key.',
     });
     expect(view.settings.provider).toBe('openai');
 
@@ -845,43 +847,114 @@ describe('GitHub Copilot as a provider', () => {
     expect(prompted?.config.systemMessage.content).toContain('title');
   });
 
-  it('routes Ask to OpenAI when its key is saved, and reports it unavailable (needs_tool_calling) when it is not', async () => {
+  it('routes Ask to Copilot with no OpenAI key, and keeps it there when one is saved: the key serves only search by meaning', async () => {
     const { ai, controller, transport } = setup({ signedIn: true });
     await enableCopilot(ai, LOCAL_USER_ID);
     const askCtx = { ...CTX, feature: 'ask.respond' };
+    const searchCtx = { ...CTX, feature: 'search.embed' };
 
-    // No OpenAI key: Ask is listed, with the reason, and refused as a missing key.
+    // No OpenAI key: Ask is on Copilot, with tool calling, and nothing is reported missing.
     const status = await controller.copilotStatus();
-    expect(status.unavailableTasks).toEqual([{ task: 'ask.respond', reason: 'needs_tool_calling' }]);
-    expect((await controller.state(PRINCIPAL)).unavailableTasks).toEqual(status.unavailableTasks);
-    expect(await ai.port.capabilities(askCtx)).toMatchObject({ available: false, reason: 'ai_key_missing' });
-    await expect(ai.port.resolveTask(askCtx, 'ask.respond')).rejects.toMatchObject({ errorClass: 'key_missing' });
+    expect(status.unavailableTasks).toEqual([]);
+    expect((await controller.state(PRINCIPAL)).unavailableTasks).toEqual([]);
+    expect(await ai.port.capabilities(askCtx)).toMatchObject({ available: true, toolCalling: true });
+    expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'copilot', model: GPT });
+    // Search by meaning waits for the OpenAI key (Copilot has no embeddings).
+    expect(await ai.port.capabilities(searchCtx)).toMatchObject({ available: false, reason: 'ai_key_missing' });
 
-    // An OpenAI key: Ask goes to OpenAI with the OpenAI model, notes stay on Copilot.
+    // An OpenAI key: Ask and notes stay on Copilot; the embeddings go to OpenAI.
     await ai.setKey('openai', PLANTED_KEY, LOCAL_USER_ID);
     expect((await controller.copilotStatus()).unavailableTasks).toEqual([]);
-    expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'openai', model: DEFAULT_DESKTOP_AI_SETTINGS.openai.model });
-    expect(await ai.port.capabilities(askCtx)).toMatchObject({ available: true, toolCalling: true });
+    expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'copilot', model: GPT });
     expect(await ai.port.resolveTask(CTX, 'notes.generate')).toMatchObject({ provider: 'copilot' });
+    expect(await ai.port.capabilities(searchCtx)).toMatchObject({ available: true });
+    expect(await ai.port.resolveTask(searchCtx, 'search.embed')).toMatchObject({ provider: 'openai' });
     expect(transport.sessions()).toHaveLength(0);
+    expect(mock.requests).toHaveLength(0);
 
-    // Taking the key away takes Ask away again.
+    // Taking the key away leaves Ask where it was.
     await ai.deleteKey('openai', LOCAL_USER_ID);
-    expect((await controller.copilotStatus()).unavailableTasks).toEqual([{ task: 'ask.respond', reason: 'needs_tool_calling' }]);
-    await expect(ai.port.resolveTask(askCtx, 'ask.respond')).rejects.toMatchObject({ errorClass: 'key_missing' });
+    expect((await controller.copilotStatus()).unavailableTasks).toEqual([]);
+    expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'copilot' });
   });
 
-  it('serves Ask from the OpenAI slot only, never from the compatible server that was chosen before', async () => {
-    const { ai, controller } = setup({ signedIn: true });
+  it('runs an Ask tool step on Copilot: the call ends the step, the held session takes the output, and the answer follows', async () => {
+    const { ai, transport } = setup({ signedIn: true });
+    await enableCopilot(ai, LOCAL_USER_ID);
+    const askCtx = { ...CTX, feature: 'ask.respond' };
+    const target = await ai.port.resolveTask(askCtx, 'ask.respond');
+    const tools = [{ name: 'search', description: 'Searches the meetings.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'], additionalProperties: false } }];
+    const history = [
+      { role: 'system' as const, content: 'Answer from the tools.' },
+      { role: 'user' as const, content: 'Who is Joe?' },
+    ];
+    const run = async (messages: Parameters<typeof ai.port.chat>[1]['messages']) => {
+      const events = [];
+      for await (const event of ai.port.chat(askCtx, { target, messages, tools, toolChoice: 'auto' })) events.push(event);
+      return events;
+    };
+
+    transport.queue({ kind: 'toolCalls', calls: [{ name: 'search', arguments: { query: 'Joe' }, toolCallId: 'call-1' }] });
+    transport.queue({ kind: 'answer', text: 'Joe sends the budget by Friday.' });
+    const first = await run(history);
+    expect(first.filter((event) => event.type === 'tool_call')).toEqual([{ type: 'tool_call', id: 'call-1', name: 'search', arguments: { query: 'Joe' } }]);
+    expect(ai.copilot.providerAdapter?.bridge.heldSessions()).toBe(1);
+
+    const second = await run([
+      ...history,
+      { role: 'assistant', content: null, toolCalls: [{ id: 'call-1', name: 'search', arguments: { query: 'Joe' } }] },
+      { role: 'tool', toolCallId: 'call-1', content: '{"hits":["Joe: budget by Friday"]}' },
+    ]);
+    expect(second.flatMap((event) => (event.type === 'delta' ? [event.text] : [])).join('')).toBe('Joe sends the budget by Friday.');
+    const sessions = transport.sessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ continuations: 1, deleted: true });
+    expect(sessions[0]?.config.model).toBe(GPT);
+    expect(sessions[0]?.toolRuns).toEqual([{ toolCallId: 'call-1', name: 'search', arguments: { query: 'Joe' }, output: '{"hits":["Joe: budget by Friday"]}' }]);
+    expect(mock.requests).toHaveLength(0);
+  });
+
+  it('closes the sessions the tool bridge holds when Copilot stops (server shutdown)', async () => {
+    const { ai, transport, calls } = setup({ signedIn: true });
+    await enableCopilot(ai, LOCAL_USER_ID);
+    const askCtx = { ...CTX, feature: 'ask.respond' };
+    const target = await ai.port.resolveTask(askCtx, 'ask.respond');
+    const tools = [{ name: 'search', description: 'Searches the meetings.', parameters: { type: 'object', properties: {}, additionalProperties: false } }];
+    transport.queue({ kind: 'toolCalls', calls: [{ name: 'search', toolCallId: 'call-1' }] });
+    for await (const _event of ai.port.chat(askCtx, { target, messages: [{ role: 'user', content: 'Who is Joe?' }], tools, toolChoice: 'auto' })) {
+      // drain the step
+    }
+    const adapter = ai.copilot.providerAdapter;
+    expect(adapter?.bridge.heldSessions()).toBe(1);
+    expect(transport.sessions()[0]?.deleted).toBe(false);
+
+    await ai.close();
+    expect(adapter?.bridge.heldSessions()).toBe(0);
+    expect(transport.sessions()[0]).toMatchObject({ deleted: true });
+    expect(calls.stopped).toBe(1);
+  });
+
+  it('a Copilot model the live listing marks as tool-less: Ask falls back to the OpenAI slot (never the compatible server), else is reported unavailable', async () => {
+    const toolless = [
+      { id: GPT, name: 'GPT-5 mini', capabilities: { supports: { toolCalls: false } } },
+      { id: CLAUDE, name: 'Claude Haiku 4.5' },
+    ];
+    const { ai, controller } = setup({ signedIn: true, models: toolless });
     await ai.update({ provider: 'openai-compatible', openaiCompatible: { baseUrl: mock.baseUrl, model: 'mock-model', requiresKey: false } }, LOCAL_USER_ID);
     const askCtx = { ...CTX, feature: 'ask.respond' };
     expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'openai-compatible', model: 'mock-model' });
 
-    await enableCopilot(ai, LOCAL_USER_ID);
+    await enableCopilot(ai, LOCAL_USER_ID, { model: GPT });
     expect((await controller.copilotStatus()).unavailableTasks).toEqual([{ task: 'ask.respond', reason: 'needs_tool_calling' }]);
     await expect(ai.port.resolveTask(askCtx, 'ask.respond')).rejects.toMatchObject({ errorClass: 'key_missing' });
     await ai.setKey('openai', PLANTED_KEY, LOCAL_USER_ID);
+    expect((await controller.copilotStatus()).unavailableTasks).toEqual([]);
     expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'openai', model: DEFAULT_DESKTOP_AI_SETTINGS.openai.model });
+    expect(await ai.port.resolveTask(CTX, 'notes.generate')).toMatchObject({ provider: 'copilot', model: GPT });
+
+    // A model that can call tools takes Ask back onto Copilot.
+    await ai.updateCopilot({ model: CLAUDE }, LOCAL_USER_ID);
+    expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'copilot', model: CLAUDE });
     expect(mock.requests).toHaveLength(0);
 
     // Leaving Copilot: everything is the compatible server again, as before Copilot.
@@ -890,12 +963,12 @@ describe('GitHub Copilot as a provider', () => {
     expect(await ai.unavailableTasks()).toEqual([]);
   });
 
-  it('with Copilot chosen and no OpenAI key, Copilot serves notes and Ask is not offered', async () => {
+  it('with Copilot chosen and no OpenAI key, Copilot serves notes and Ask, and nothing is reported missing', async () => {
     const { ai, controller } = setup({ signedIn: true });
     await enableCopilot(ai, LOCAL_USER_ID);
-    expect((await controller.copilotStatus()).unavailableTasks.map((t) => t.task)).toEqual(['ask.respond']);
+    expect((await controller.copilotStatus()).unavailableTasks).toEqual([]);
     expect(await ai.port.capabilities(CTX)).toMatchObject({ available: true });
-    expect((await ai.port.capabilities({ ...CTX, feature: 'ask.respond' })).toolCalling).toBe(false);
+    expect(await ai.port.capabilities({ ...CTX, feature: 'ask.respond' })).toMatchObject({ available: true, toolCalling: true });
   });
 
   it('signed out: generating is refused as a missing key before anything is sent', async () => {
