@@ -7,12 +7,14 @@ import { COPILOT_CONSENT_COPY } from '@marinoscar/kvox-web/copilot/headless';
 // The card's text is the package's, written once (`COPILOT_CONSENT_COPY`); the
 // specs read it from there so a rewording in the package does not break them.
 // The other labels are the card's and the platform's accessible names
-// (`AccountSignInProviderCard`: "Enable {name}", "Sign in with {name}", "Sign out").
+// (`AccountSignInProviderCard`: "Sign in with {name}", "Sign out"). The card has no
+// switch on Desktop: Copilot is one option of the page's "AI provider" radio group.
 // =============================================================================
 
 export const COPILOT_CONSENT_TITLE = COPILOT_CONSENT_COPY.title;
 export const COPILOT_ACCEPT_LABEL = COPILOT_CONSENT_COPY.acceptLabel;
-export const COPILOT_SWITCH = 'Enable GitHub Copilot';
+/** The option of the "AI provider" radio group (the server's label). */
+export const COPILOT_RADIO = 'GitHub Copilot';
 export const COPILOT_SIGN_IN_BUTTON = 'Sign in with GitHub Copilot';
 export const COPILOT_SIGN_IN_DIALOG = 'Sign in to GitHub Copilot';
 export const COPILOT_DOWNLOAD_BUTTON = 'Download runtime';
