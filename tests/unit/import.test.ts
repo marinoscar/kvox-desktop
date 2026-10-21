@@ -60,6 +60,31 @@ async function waitForExtraction(objectId: string): Promise<{ status: string; ch
   throw new Error(`extraction of ${objectId} did not finish`);
 }
 
+/** Exports a note in `format` through the notes slice and returns the downloaded file's bytes. */
+async function exportNote(noteId: string, format: string): Promise<Buffer> {
+  const headers = { Authorization: `Bearer ${TOKEN}` };
+  const created = await fetch(`${connection.baseUrl}/api/notes/${noteId}/exports`, {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ format }),
+  });
+  expect([200, 202], `export ${format}`).toContain(created.status);
+  // The Desktop server answers without the web edition's `{ data }` envelope.
+  const createdBody = (await created.json()) as { exportId?: string; id?: string };
+  const exportId = createdBody.exportId ?? createdBody.id;
+  expect(exportId).toBeDefined();
+  let url: string | undefined;
+  for (let attempt = 0; attempt < 120 && !url; attempt += 1) {
+    const download = await fetch(`${connection.baseUrl}/api/notes/exports/${exportId}/download`, { headers });
+    if (download.status === 200) url = ((await download.json()) as { url: string }).url;
+    else await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  expect(url, `${format} export finished`).toBeDefined();
+  const file = await fetch(url!.startsWith('http') ? url! : `${connection.baseUrl}${url}`, { headers });
+  expect(file.status).toBe(200);
+  return Buffer.from(await file.arrayBuffer());
+}
+
 beforeAll(async () => {
   userDataDir = mkdtempSync(join(tmpdir(), 'kvox-import-'));
   server = await startServer({
@@ -131,32 +156,31 @@ describe('importLocalFile against the Desktop server', () => {
     // Round trip: the Desktop export of the imported note imports to the same note again.
     const exportDir = mkdtempSync(join(tmpdir(), 'kvox-import-export-'));
     try {
-      const created = await fetch(`${connection.baseUrl}/api/notes/${outcome.id}/exports`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ format: 'markdown' }),
-      });
-      expect([200, 202]).toContain(created.status);
-      // The Desktop server answers without the web edition's `{ data }` envelope.
-      const createdBody = (await created.json()) as { exportId?: string; id?: string };
-      const exportId = createdBody.exportId ?? createdBody.id;
-      expect(exportId).toBeDefined();
-      let url: string | undefined;
-      for (let attempt = 0; attempt < 120 && !url; attempt += 1) {
-        const download = await fetch(`${connection.baseUrl}/api/notes/exports/${exportId}/download`, { headers: { Authorization: `Bearer ${TOKEN}` } });
-        if (download.status === 200) url = ((await download.json()) as { url: string }).url;
-        else await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-      expect(url).toBeDefined();
-      const file = await fetch(url!.startsWith('http') ? url! : `${connection.baseUrl}${url}`, { headers: { Authorization: `Bearer ${TOKEN}` } });
       const reexported = join(exportDir, 'again.md');
-      writeFileSync(reexported, Buffer.from(await file.arrayBuffer()));
+      writeFileSync(reexported, await exportNote(outcome.id, 'markdown'));
       const again = await importLocalFile(reexported, { connection });
       expect(again).toMatchObject({ ok: true, kind: 'note', title: expected.title });
       if (again.ok) expect((await api<{ body: string }>(`/notes/${again.id}`)).body).toBe(expected.body);
     } finally {
       removeQuietly(exportDir);
     }
+  });
+
+  it('lists the markdown, PDF and Word exporters, and exports an imported note as a real PDF and a real .docx', async () => {
+    const outcome = await importFixture('planning-sync-note.md');
+    expect(outcome).toMatchObject({ ok: true, kind: 'note' });
+    if (!outcome.ok) return;
+
+    const { exporters } = await api<{ exporters: Array<{ format: string }> }>('/notes/exporters');
+    expect(exporters.map((exporter) => exporter.format).sort()).toEqual(['docx', 'markdown', 'pdf']);
+
+    const pdf = await exportNote(outcome.id, 'pdf');
+    expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    expect(pdf.length).toBeGreaterThan(1024);
+
+    const docx = await exportNote(outcome.id, 'docx');
+    expect(docx.subarray(0, 2).toString('latin1')).toBe('PK');
+    expect(docx.includes(Buffer.from('word/document.xml', 'latin1'))).toBe(true);
   });
 
   it('relays the slice’s own refusal for a foreign JSON file, creating nothing', async () => {
