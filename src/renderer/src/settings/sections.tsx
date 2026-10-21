@@ -1,5 +1,6 @@
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import HubIcon from '@mui/icons-material/Hub';
+import ManageSearchIcon from '@mui/icons-material/ManageSearch';
 import PrivacyTipIcon from '@mui/icons-material/PrivacyTip';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 
@@ -52,6 +53,12 @@ export const DESKTOP_SETTINGS_SECTIONS: SettingsSectionDef[] = [
         path: '/settings/knowledge',
       },
       noteTemplatesCard,
+      {
+        title: 'Semantic search on this device',
+        description: 'Find notes and transcripts by meaning, on this computer: no API key, works offline. A one-time model download.',
+        Icon: ManageSearchIcon,
+        path: '/settings/search',
+      },
     ],
   },
   {

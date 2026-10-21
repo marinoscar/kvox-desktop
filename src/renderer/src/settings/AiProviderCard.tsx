@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
@@ -6,6 +7,7 @@ import FormControl from '@mui/material/FormControl';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import FormHelperText from '@mui/material/FormHelperText';
 import FormLabel from '@mui/material/FormLabel';
+import Link from '@mui/material/Link';
 import MenuItem from '@mui/material/MenuItem';
 import Radio from '@mui/material/Radio';
 import RadioGroup from '@mui/material/RadioGroup';
@@ -268,6 +270,15 @@ export function AiProviderCard() {
       {saved && slot && active === 'openai-compatible' && !keyNeeded && (
         <KeylessProviderCard provider={{ id: slot.id, displayName: slot.label }} />
       )}
+
+      {/* Search by meaning needs no provider: the on-device model has its own page (marinoscar/kvox#660). */}
+      <Typography variant="body2" color="text.secondary">
+        Search by meaning can run on this device instead, with no API key:{' '}
+        <Link component={RouterLink} to="/settings/search">
+          Semantic search on this device
+        </Link>
+        .
+      </Typography>
 
       {/* The add-on: its own card, consent and sign-in. Its status keeps the footer below true. */}
       <CopilotSection key={copilotReads} onStatus={setCopilotStatus} />

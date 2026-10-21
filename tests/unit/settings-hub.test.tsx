@@ -27,12 +27,20 @@ const cards = DESKTOP_SETTINGS_SECTIONS.flatMap((section) => section.cards);
 const routePaths = desktopSettingsRoutes.map((route) => route.path);
 
 describe('the Desktop settings registry', () => {
-  it('lists the five cards in the issue order, grouped', () => {
-    expect(cards.map((card) => card.title)).toEqual(['AI provider', 'Connected knowledge', 'Note Templates', 'Data and privacy', 'Updates']);
+  it('lists the six cards in the issue order, grouped', () => {
+    expect(cards.map((card) => card.title)).toEqual([
+      'AI provider',
+      'Connected knowledge',
+      'Note Templates',
+      'Semantic search on this device',
+      'Data and privacy',
+      'Updates',
+    ]);
     expect(cards.map((card) => card.path)).toEqual([
       '/settings/ai',
       '/settings/knowledge',
       '/settings/note-templates',
+      '/settings/search',
       '/settings/data',
       '/settings/updates',
     ]);
