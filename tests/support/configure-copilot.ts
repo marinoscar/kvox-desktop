@@ -16,7 +16,8 @@ import type { DesktopAi } from '../../src/server/ai/desktop-ai';
 // Copilot host whose runtime is "ready" (or missing, or downloadable) and whose
 // transport is `createCopilotMockTransport`, so no SDK and no runtime are needed,
 // and `enableCopilot`, which gives the consent the settings gate asks for and
-// switches the add-on on through the same path the endpoint uses.
+// chooses Copilot as the AI provider through the same path the endpoint uses
+// (`enabled: true` of `PATCH /desktop/ai/copilot` means `provider: 'copilot'`).
 // =============================================================================
 
 /** What the harness counted. */
@@ -105,7 +106,7 @@ export function currentConsent(): { enabled: true; consentedAt: string; consentV
   return { enabled: true, consentedAt: new Date().toISOString(), consentVersion: COPILOT_CONSENT_VERSION };
 }
 
-/** Consents to the current text and switches Copilot on (`PATCH /desktop/ai/copilot`'s path). */
+/** Consents to the current text and chooses Copilot as the provider (`PATCH /desktop/ai/copilot`'s path). */
 export async function enableCopilot(ai: DesktopAi, actorUserId: string, extra: { model?: string | null } = {}): Promise<void> {
   await ai.updateCopilot({ ...currentConsent(), ...extra }, actorUserId);
 }

@@ -6,7 +6,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 
 import { MOCK_NOTE_TEXT, configureAiProvider, openSettingsCard } from '../support/configure-ai';
 import { expectRail, goTo, rail, railItem, useWideWindow, userMenuButton } from '../support/rail';
-import { COPILOT_CONSENT_TITLE, COPILOT_SWITCH } from '../support/copilot-ui';
+import { COPILOT_CONSENT_TITLE, COPILOT_RADIO } from '../support/copilot-ui';
 import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
 
 // =============================================================================
@@ -219,16 +219,24 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   await page.getByRole('button', { name: /^AI provider/ }).click();
   await expect(page.getByRole('heading', { name: 'AI provider', level: 1 })).toBeVisible();
   await expect(page.getByText('KVox may connect only to: api.openai.com')).toBeVisible();
-  // Copilot is off by default; turning it on shows the consent first, and "Not now" leaves it off
+  // One choice of three, never off: OpenAI by default, only its setup shown.
+  const providers = page.getByRole('radiogroup', { name: 'AI provider' });
+  await expect(providers.getByRole('radio')).toHaveCount(3);
+  await expect(providers.getByRole('radio', { name: 'OpenAI', exact: true })).toBeChecked();
+  await expect(providers.getByRole('radio', { name: /off/i })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Set up OpenAI', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save AI settings' })).toHaveCount(0);
+  // Choosing Copilot asks for the consent first, and "Not now" puts the radio back on OpenAI
   // (accepting, the download, the sign-in and a note on Copilot are in copilot.spec.ts).
-  const copilotSwitch = page.getByLabel(COPILOT_SWITCH);
-  await expect(copilotSwitch).not.toBeChecked();
-  await copilotSwitch.click();
+  const copilotRadio = providers.getByRole('radio', { name: COPILOT_RADIO });
+  await expect(copilotRadio).not.toBeChecked();
+  await copilotRadio.click();
   const consent = page.getByRole('dialog', { name: COPILOT_CONSENT_TITLE });
   await expect(consent).toBeVisible();
   await consent.getByRole('button', { name: 'Not now' }).click();
   await expect(consent).toBeHidden();
-  await expect(copilotSwitch).not.toBeChecked();
+  await expect(copilotRadio).not.toBeChecked();
+  await expect(providers.getByRole('radio', { name: 'OpenAI', exact: true })).toBeChecked();
   await expect(page.getByText('KVox may connect only to: api.openai.com')).toBeVisible();
   await configureAiProvider(page, { baseUrl: provider!.baseUrl, apiKey: PLANTED_KEY });
   await openSettingsCard(page, 'AI provider');

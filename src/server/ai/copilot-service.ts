@@ -101,19 +101,25 @@ export class CopilotService {
     await this.starting;
   }
 
-  /** Takes the adapter down (Copilot is off): cancels a sign-in or download and stops the runtime. */
+  /**
+   * Takes the adapter down (Copilot is off, or the server shuts down): cancels a sign-in or download,
+   * closes the sessions the tool bridge holds between Ask's tool steps, and stops the runtime.
+   */
   async deactivate(): Promise<void> {
     this.generation += 1;
     this.flow?.abort();
     this.flow = null;
     this.download?.abort();
     this.download = null;
+    const adapter = this.adapter;
     const transport = this.transport;
     this.adapter = null;
     this.transport = null;
     this.auth = null;
     this.liveModels = null;
     if (this.runtime.state === 'downloading') this.runtime = { state: 'missing', version: null, progress: null };
+    // Before the runtime stops, so each held session is deleted (its prompt is not left on disk).
+    await closeHeldSessions(adapter);
     await transport?.stop?.().catch(() => undefined);
   }
 
@@ -201,7 +207,7 @@ export class CopilotService {
   /** "Remove Copilot data": only with Copilot off and the runtime stopped. */
   async removeData(options: { includeRuntime?: boolean }): Promise<{ removed: string[]; keptRuntime: boolean }> {
     if (this.adapter || this.download) {
-      throw new CopilotConflictError('copilot_enabled', 'Switch GitHub Copilot off before removing its data.');
+      throw new CopilotConflictError('copilot_enabled', 'Choose another AI provider before removing GitHub Copilot data.');
     }
     return (await this.options.host.removeData?.(options)) ?? { removed: [], keptRuntime: false };
   }
@@ -367,6 +373,17 @@ export class CopilotService {
       models: models.map((model) => ({ id: model.id, label: model.label, structuredOutput: model.structuredOutput })),
     };
   }
+}
+
+/**
+ * Closes the sessions an adapter's tool bridge holds (`bridge.closeAll()` of the Copilot adapter).
+ * Read structurally, so it also compiles against an adapter without a bridge; a failure is ignored
+ * (the runtime is stopped next).
+ */
+async function closeHeldSessions(adapter: CopilotProviderAdapter | null): Promise<void> {
+  const bridge = (adapter as { bridge?: { closeAll?: unknown } } | null)?.bridge;
+  if (typeof bridge?.closeAll !== 'function') return;
+  await (bridge.closeAll as () => Promise<void>).call(bridge).catch(() => undefined);
 }
 
 /** The `details.check` of a package `AiError` (in its response body), else a thrown error's code, else `null` (never a message). */

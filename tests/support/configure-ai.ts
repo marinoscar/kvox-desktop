@@ -8,7 +8,8 @@ import { goTo } from './rail';
 //
 // Points the app at an OpenAI-compatible server (the loopback mock of
 // openai-compatible-mock.ts) and saves its key, through the settings hub as a
-// user would (the hub, then the AI provider card; marinoscar/kvox-desktop#19);
+// user would (the hub, then the AI provider page: choose the provider, save the
+// server settings, then the key; marinoscar/kvox-desktop#19);
 // on a Linux session with no keyring it first accepts plaintext key storage on
 // the Data and privacy page (a typed confirmation), without which the key is
 // refused. The key card verifies the key against the mock before storing it.
@@ -51,11 +52,14 @@ export async function acceptPlaintextKeysIfAsked(page: Page): Promise<void> {
 
 export async function configureAiProvider(page: Page, options: { baseUrl: string; apiKey: string; model?: string }): Promise<void> {
   await openSettingsCard(page, 'AI provider');
+  // Choosing applies at once; then only that provider's setup is on the page.
   await page.getByRole('radio', { name: 'OpenAI-compatible server' }).check();
+  await expect(page.getByRole('status').filter({ hasText: 'Using OpenAI-compatible server.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Set up OpenAI-compatible server' })).toBeVisible();
   await page.getByLabel('Base URL').fill(options.baseUrl);
   await page.getByLabel('Model').fill(options.model ?? 'mock-model');
-  await page.getByRole('button', { name: 'Save AI settings' }).click();
-  await expect(page.getByText('AI settings saved.')).toBeVisible();
+  await page.getByRole('button', { name: 'Save server settings' }).click();
+  await expect(page.getByText('Server settings saved.')).toBeVisible();
   await acceptPlaintextKeysIfAsked(page);
   await openSettingsCard(page, 'AI provider');
   await page.getByLabel('API key', { exact: true }).fill(options.apiKey);

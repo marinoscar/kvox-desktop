@@ -253,7 +253,7 @@ describe('the localSearch setting', () => {
     expect(base).toEqual(['api.openai.com']);
     const during = allowedHostsFor(DEFAULT_DESKTOP_AI_SETTINGS, { modelDownload: true });
     expect(during).toEqual(['api.openai.com', ...LOCAL_EMBEDDING_DOWNLOAD_HOSTS]);
-    expect(allowedHostsFor({ ...DEFAULT_DESKTOP_AI_SETTINGS, provider: null }, { modelDownload: true })).toEqual([...LOCAL_EMBEDDING_DOWNLOAD_HOSTS]);
+    expect(allowedHostsFor({ ...DEFAULT_DESKTOP_AI_SETTINGS, provider: 'copilot' }, { modelDownload: true })).toEqual([...LOCAL_EMBEDDING_DOWNLOAD_HOSTS]);
     expect(allowedHostsFor(DEFAULT_DESKTOP_AI_SETTINGS, { modelDownload: false })).toEqual(base);
   });
 });

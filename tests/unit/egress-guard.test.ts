@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
 
 import { COPILOT_CONSENT_VERSION } from '@marinoscar/kvox-contract/copilot';
+import { COPILOT_RUNTIME_DOWNLOAD_HOSTS } from '../../src/server/ai/copilot-sandbox';
 import { DEFAULT_DESKTOP_AI_SETTINGS, allowedHostsFor, type DesktopAiSettings } from '../../src/server/ai/desktop-ai-settings';
 import { EgressBlockedError, EgressGuard, isLoopback } from '../../src/server/egress-guard';
 
@@ -104,31 +105,58 @@ describe('EgressGuard', () => {
   });
 });
 
-describe('the Copilot hosts follow the setting (marinoscar/kvox-desktop#21)', () => {
-  const on = (patch: Partial<DesktopAiSettings['copilot']> = {}): DesktopAiSettings => ({
+describe('the Copilot hosts follow the provider (marinoscar/kvox-desktop#21)', () => {
+  /** Copilot chosen, with the consent given (`enabled` is derived: provider === 'copilot'). */
+  const copilot = (patch: Partial<DesktopAiSettings['copilot']> = {}): DesktopAiSettings => ({
     ...DEFAULT_DESKTOP_AI_SETTINGS,
+    provider: 'copilot',
     copilot: { enabled: true, consentedAt: '2026-10-19T00:00:00.000Z', consentVersion: COPILOT_CONSENT_VERSION, model: null, ...patch },
   });
+  const OPENAI = ['api.openai.com'];
 
-  it('adds exactly COPILOT_EGRESS_HOSTS while Copilot is on, next to the primary provider, and drops them when it is off', () => {
-    expect(allowedHostsFor(DEFAULT_DESKTOP_AI_SETTINGS)).toEqual(['api.openai.com']);
-    expect(allowedHostsFor(on())).toEqual(['api.openai.com', ...COPILOT_EGRESS_HOSTS]);
-    expect(allowedHostsFor({ ...on(), provider: null })).toEqual([...COPILOT_EGRESS_HOSTS]);
-    expect(allowedHostsFor(on({ enabled: false }))).toEqual(['api.openai.com']);
+  it('allows exactly the chosen provider host for OpenAI and for a compatible server', () => {
+    expect(allowedHostsFor(DEFAULT_DESKTOP_AI_SETTINGS)).toEqual(OPENAI);
+    // An OpenAI key changes nothing when OpenAI is the provider; the Copilot hosts are never added.
+    expect(allowedHostsFor(DEFAULT_DESKTOP_AI_SETTINGS, { openaiKey: true })).toEqual(OPENAI);
+    const compatible = (baseUrl: string): DesktopAiSettings => ({
+      ...DEFAULT_DESKTOP_AI_SETTINGS,
+      provider: 'openai-compatible',
+      openaiCompatible: { ...DEFAULT_DESKTOP_AI_SETTINGS.openaiCompatible, baseUrl, model: 'm' },
+    });
+    expect(allowedHostsFor(compatible('https://llm.corp.example:8443/v1'), { openaiKey: true })).toEqual(['llm.corp.example']);
+    expect(allowedHostsFor(compatible('http://127.0.0.1:11434/v1'))).toEqual([]);
+    // A stale Copilot block next to another provider adds nothing.
+    expect(allowedHostsFor({ ...copilot(), provider: 'openai' })).toEqual(OPENAI);
   });
 
-  it('needs the CURRENT consent: enabled with no consent, or an older version, adds nothing', () => {
-    expect(allowedHostsFor(on({ consentedAt: null }))).toEqual(['api.openai.com']);
-    expect(allowedHostsFor(on({ consentVersion: '0-older' }))).toEqual(['api.openai.com']);
-    expect(allowedHostsFor(on({ consentVersion: null }))).toEqual(['api.openai.com']);
+  it('with Copilot chosen: the Copilot hosts, plus api.openai.com only when an OpenAI key is stored for search by meaning', () => {
+    expect(allowedHostsFor(copilot())).toEqual([...COPILOT_EGRESS_HOSTS]);
+    expect(allowedHostsFor(copilot(), { openaiKey: false })).toEqual([...COPILOT_EGRESS_HOSTS]);
+    expect(allowedHostsFor(copilot(), { openaiKey: true })).toEqual([...COPILOT_EGRESS_HOSTS, ...OPENAI]);
   });
 
-  it('is what the guard enforces: the Copilot hosts connect only while allowed', () => {
+  it('needs the CURRENT consent: an older or missing consent adds no Copilot host (only OpenAI, once its key is stored)', () => {
+    for (const stale of [{ consentedAt: null }, { consentVersion: '0-older' }, { consentVersion: null }]) {
+      expect(allowedHostsFor(copilot(stale))).toEqual([]);
+      expect(allowedHostsFor(copilot(stale), { openaiKey: true })).toEqual(OPENAI);
+    }
+  });
+
+  it('adds the runtime download hosts only while Copilot is active and the download runs', () => {
+    const withDownload = allowedHostsFor(copilot(), { runtimeDownload: true });
+    expect(withDownload).toEqual([...COPILOT_EGRESS_HOSTS, ...COPILOT_RUNTIME_DOWNLOAD_HOSTS.filter((host) => !COPILOT_EGRESS_HOSTS.includes(host))]);
+    expect(allowedHostsFor(copilot({ consentedAt: null }), { runtimeDownload: true })).toEqual([]);
+    expect(allowedHostsFor(DEFAULT_DESKTOP_AI_SETTINGS, { runtimeDownload: true })).toEqual(OPENAI);
+  });
+
+  it('is what the guard enforces: the Copilot hosts connect only while Copilot is the provider', () => {
     const g = new EgressGuard({ logError: () => undefined });
-    g.allow(allowedHostsFor(on()));
+    g.allow(allowedHostsFor(copilot()));
     for (const host of COPILOT_EGRESS_HOSTS) expect(g.isAllowed(host)).toBe(true);
+    expect(g.isAllowed('api.openai.com')).toBe(false);
     expect(g.isAllowed('example.com')).toBe(false);
-    g.allow(allowedHostsFor(on({ enabled: false })));
+    g.allow(allowedHostsFor(DEFAULT_DESKTOP_AI_SETTINGS));
     for (const host of COPILOT_EGRESS_HOSTS) expect(g.isAllowed(host)).toBe(false);
+    expect(g.isAllowed('api.openai.com')).toBe(true);
   });
 });

@@ -178,7 +178,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       secrets,
       adapters: providers.adapters,
       checkEgress: (host) => egress.check(host),
-      // GitHub Copilot is an opt-in add-on: nothing of it is loaded until the user switches it on.
+      // GitHub Copilot is one of the three AI providers: nothing of it is loaded until the user chooses it (after consent).
       copilot: options.copilotE2eMock
         ? (await import('./ai/copilot-e2e-host.js')).createE2eCopilotHost(folder.copilot)
         : createDefaultCopilotHost({ folder, log: options.log }),

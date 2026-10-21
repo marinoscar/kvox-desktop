@@ -20,6 +20,7 @@ import {
   DESKTOP_AI_NAMESPACE,
   DESKTOP_AI_PROVIDERS,
   DESKTOP_AI_SETTINGS_NAMESPACE,
+  desktopAiSettingsSchema,
   type DesktopAiSettings,
 } from '../../src/server/ai/desktop-ai-settings';
 import { DesktopAi, loadProviderAdapters, type DesktopAiAdapters } from '../../src/server/ai/desktop-ai';
@@ -49,10 +50,14 @@ import { fakeCipher, openTestDatabase, type TestDatabase } from './support/datab
 //   3. THE ALLOWLIST FOLLOWS THE SETTINGS: only the active provider's host.
 //   4. KEYS STAY IN KVOX_SECRETS: a planted key-shaped string is in no setting,
 //      response, log line, error or file outside the encrypted blob.
-//   5. COPILOT IS AN OPT-IN ADD-ON (marinoscar/kvox-desktop#21): off by default and
-//      then not even loaded, never switched on without consent, routed by
-//      capability (notes on Copilot, Ask on OpenAI or reported unavailable),
-//      signed in through the endpoints, and holding no token anywhere.
+//   5. COPILOT IS ONE OF THREE PROVIDERS (marinoscar/kvox-desktop#21): the
+//      provider is never off; Copilot is not even loaded until it is chosen, is
+//      never chosen without consent, is routed by capability (notes and Ask on
+//      Copilot, Ask through the adapter's tool bridge; the embeddings of search
+//      by meaning on OpenAI when a key is stored), closes the bridge's held
+//      sessions when it stops, is signed
+//      in through the endpoints, and holds no token anywhere. Stored settings
+//      from the add-on days migrate on read.
 // =============================================================================
 
 const PLANTED_KEY = 'sk-proj-PLANTEDkvox584DoNotLeakAbCdEf0123456789';
@@ -249,13 +254,18 @@ describe('DesktopAi over the platform adapters', () => {
     expect(guard.allowedHosts).toEqual([]);
     expect(guard.isAllowed('llm.corp.example')).toBe(false);
 
-    await ai.update({ provider: null }, LOCAL_USER_ID);
-    expect(guard.allowedHosts).toEqual([]);
-    expect(guard.isAllowed('llm.corp.example')).toBe(false);
     expect(guard.isAllowed('127.0.0.1')).toBe(true);
 
     await ai.update({ provider: 'openai' }, LOCAL_USER_ID);
     expect(guard.allowedHosts).toEqual(['api.openai.com']);
+    expect(guard.isAllowed('llm.corp.example')).toBe(false);
+  });
+
+  it('never turns the provider off: an explicit null is refused, and a read of an old null is OpenAI', async () => {
+    const ai = desktopAi(providers.adapters);
+    await expect(ai.update({ provider: null }, LOCAL_USER_ID)).rejects.toMatchObject({ status: 400, response: { code: 'ai_settings_invalid' } });
+    await expect(ai.update({ provider: 'anthropic' }, LOCAL_USER_ID)).rejects.toMatchObject({ status: 400 });
+    expect((await ai.read()).provider).toBe('openai');
   });
 
   it('refuses a base URL with credentials, a query or a non-http scheme, and keeps the allowlist', async () => {
@@ -401,7 +411,53 @@ describe('DesktopAi over the platform adapters', () => {
   });
 });
 
-// ---- 5. The Copilot add-on ---------------------------------------------------------
+// ---- 5. The settings schema's migration ----------------------------------------------
+
+describe('desktopAi settings: the one-of-three provider and its migration', () => {
+  const consent = { consentedAt: '2026-10-19T00:00:00.000Z', consentVersion: COPILOT_CONSENT_VERSION, model: null };
+  const old = (provider: unknown, copilot?: unknown) => ({
+    provider,
+    openai: { model: 'gpt-5.4-mini' },
+    openaiCompatible: { baseUrl: null, model: null, apiStyle: 'chat_completions', requiresKey: true },
+    ...(copilot === undefined ? {} : { copilot }),
+  });
+
+  it.each([
+    ['the defaults', 'openai', false, DEFAULT_DESKTOP_AI_SETTINGS],
+    ['the old Off', 'openai', false, old(null)],
+    ['a missing provider', 'openai', false, old(undefined)],
+    ['the old Off with the add-on off', 'openai', false, old(null, { enabled: false })],
+    ['the old OpenAI with Copilot on', 'copilot', true, old('openai', { enabled: true, ...consent })],
+    ['the old compatible server with Copilot on', 'copilot', true, old('openai-compatible', { enabled: true, ...consent })],
+    ['the old Off with Copilot on', 'copilot', true, old(null, { enabled: true, ...consent })],
+    ['the old compatible server with Copilot on and an OLD consent', 'openai-compatible', false, old('openai-compatible', { enabled: true, ...consent, consentVersion: '0-older' })],
+    ['the old OpenAI with Copilot on and no consent', 'openai', false, old('openai', { enabled: true })],
+    ['the old Off with Copilot on and an OLD consent', 'openai', false, old(null, { enabled: true, ...consent, consentVersion: '0-older' })],
+    ['copilot chosen, enabled absent', 'copilot', true, old('copilot', { consentedAt: consent.consentedAt, consentVersion: consent.consentVersion })],
+    ['copilot chosen with a stale enabled: false', 'copilot', true, old('copilot', { enabled: false, ...consent })],
+    ['openai chosen with a stale enabled: true and no consent', 'openai', false, old('openai', { enabled: true, consentedAt: null })],
+  ])('reads %s as provider %s with copilot.enabled %s', (_name, provider, enabled, stored) => {
+    const parsed = desktopAiSettingsSchema.parse(stored);
+    expect(parsed.provider).toBe(provider);
+    expect(parsed.copilot.enabled).toBe(enabled);
+    // The invariant, and a second parse changes nothing.
+    expect(parsed.copilot.enabled).toBe(parsed.provider === 'copilot');
+    expect(desktopAiSettingsSchema.parse(parsed)).toEqual(parsed);
+  });
+
+  it('keeps the consent and the chosen model when it migrates, and the defaults of a missing copilot block', () => {
+    expect(desktopAiSettingsSchema.parse(old('openai', { enabled: true, ...consent, model: GPT })).copilot).toEqual({ enabled: true, ...consent, model: GPT });
+    expect(desktopAiSettingsSchema.parse(old(null)).copilot).toEqual(DEFAULT_DESKTOP_AI_SETTINGS.copilot);
+    expect(DEFAULT_DESKTOP_AI_SETTINGS).toMatchObject({ provider: 'openai', copilot: { enabled: false } });
+  });
+
+  it('refuses a provider that is not one of the three, and anything that is not an object', () => {
+    for (const provider of ['anthropic', '', 0, false]) expect(desktopAiSettingsSchema.safeParse(old(provider)).success).toBe(false);
+    for (const value of [null, 'openai', 3, []]) expect(desktopAiSettingsSchema.safeParse(value).success).toBe(false);
+  });
+});
+
+// ---- 6. The Copilot provider -------------------------------------------------------
 
 const CLAUDE = 'claude-haiku-4.5';
 const GPT = 'gpt-5-mini';
@@ -413,7 +469,7 @@ function openReply() {
   return { raw: Object.assign(new EventEmitter(), { writableFinished: false }) } as never;
 }
 
-describe('GitHub Copilot add-on', () => {
+describe('GitHub Copilot as a provider', () => {
   let providers: DesktopAiAdapters;
   let mock: OpenAiCompatibleMock;
 
@@ -449,40 +505,75 @@ describe('GitHub Copilot add-on', () => {
     return { ...harness, ai: wired, guard, controller };
   }
 
-  it('is a selectable-by-consent slot, never the primary provider, and holds no key', async () => {
+  it('is one of three provider choices, holds no key, and is never chosen without consent', async () => {
     const { ai, controller } = setup();
     const view = await controller.settings();
     expect(view.providers.map((p) => p.id)).toEqual(['openai', 'openai-compatible', 'copilot']);
-    expect(view.providers.find((p) => p.id === 'copilot')).toMatchObject({ implemented: true, primary: false, toolCalling: false, key: null, needsKey: false });
-    expect(DESKTOP_AI_PROVIDERS.find((p) => p.id === 'copilot')).toMatchObject({ implemented: true, toolCalling: false });
+    expect(view.providers.map((p) => p.primary)).toEqual([true, true, true]);
+    expect(view.providers.find((p) => p.id === 'copilot')).toMatchObject({ implemented: true, primary: true, toolCalling: true, key: null, needsKey: false });
+    expect(DESKTOP_AI_PROVIDERS.find((p) => p.id === 'copilot')).toMatchObject({
+      implemented: true,
+      toolCalling: true,
+      note: 'Your own GitHub Copilot subscription, after you sign in. Search by meaning needs an OpenAI API key.',
+    });
+    expect(view.settings.provider).toBe('openai');
 
-    // It is an add-on: it cannot be the primary provider, and it has no API key to store.
-    await expect(ai.update({ provider: 'copilot' }, LOCAL_USER_ID)).rejects.toMatchObject({ status: 400 });
+    // Choosing it without the consent is refused, and nothing is written.
+    await expect(ai.update({ provider: 'copilot' }, LOCAL_USER_ID)).rejects.toMatchObject({ status: 409, response: { code: 'consent_required' } });
+    expect((await ai.read()).provider).toBe('openai');
+    // It has no API key to store.
     await expect(ai.setKey('copilot', 'gho_abcdefghijklmnop', LOCAL_USER_ID)).rejects.toMatchObject({
       status: 400,
       response: { code: 'ai_key_not_applicable' },
     });
-    expect((await ai.read()).provider).toBe('openai');
   });
 
-  it('migrates a stored pre-Copilot setting to the defaults and never turns Copilot on', async () => {
-    const legacy = { ...DEFAULT_DESKTOP_AI_SETTINGS, copilot: { enabled: false } };
-    await db.prisma.systemSettings.upsert({
-      where: { key: DESKTOP_AI_NAMESPACE },
-      update: { value: legacy },
-      create: { key: DESKTOP_AI_NAMESPACE, value: legacy, version: 1, updatedByUserId: LOCAL_USER_ID },
-    });
-    const { ai, controller, calls } = setup();
+  it('migrates what the add-on days stored: the old Off, and the old switch, read as the new provider', async () => {
+    const consent = { consentedAt: '2026-10-19T00:00:00.000Z', consentVersion: COPILOT_CONSENT_VERSION, model: GPT };
+    const store = (value: unknown) =>
+      db.prisma.systemSettings.upsert({
+        where: { key: DESKTOP_AI_NAMESPACE },
+        update: { value: value as Prisma.InputJsonValue },
+        create: { key: DESKTOP_AI_NAMESPACE, value: value as Prisma.InputJsonValue, version: 1, updatedByUserId: LOCAL_USER_ID },
+      });
+    const { ai, controller, calls } = setup({ signedIn: true });
+
+    // Before Copilot existed as an adapter: `{ enabled: false }` reads as the defaults.
+    await store({ ...DEFAULT_DESKTOP_AI_SETTINGS, copilot: { enabled: false } });
     expect((await ai.read()).copilot).toEqual({ enabled: false, consentedAt: null, consentVersion: null, model: null });
     await ai.start();
     expect(calls.prepared).toBe(0);
     expect(await controller.copilotStatus()).toMatchObject({ enabled: false, signedIn: false, models: [], unavailableTasks: [] });
 
-
     // A row with no copilot key at all reads the same.
     const bare = { provider: 'openai', openai: { model: 'gpt-5.4-mini' }, openaiCompatible: DEFAULT_DESKTOP_AI_SETTINGS.openaiCompatible };
-    await db.prisma.systemSettings.update({ where: { key: DESKTOP_AI_NAMESPACE }, data: { value: bare } });
+    await store(bare);
     expect((await ai.read()).copilot).toEqual(DEFAULT_DESKTOP_AI_SETTINGS.copilot);
+
+    // The old Off (provider null) is OpenAI.
+    await store({ ...bare, provider: null });
+    expect((await ai.read()).provider).toBe('openai');
+
+    // The old "OpenAI + Copilot on" is Copilot, and start-up brings it up from the stored row alone.
+    await store({ ...bare, provider: 'openai', copilot: { enabled: true, ...consent } });
+    expect(await ai.read()).toMatchObject({ provider: 'copilot', copilot: { enabled: true, ...consent } });
+    await ai.start();
+    expect(ai.copilot.ready).toBe(true);
+    expect(await controller.copilotStatus()).toMatchObject({ enabled: true });
+
+    // The old "compatible + Copilot on" with an OLD consent was off: it stays the compatible server.
+    await store({ ...bare, provider: 'openai-compatible', copilot: { enabled: true, ...consent, consentVersion: '0-older' } });
+    expect(await ai.read()).toMatchObject({ provider: 'openai-compatible', copilot: { enabled: false, consentVersion: '0-older' } });
+    await ai.start();
+    expect(ai.copilot.ready).toBe(false);
+
+    // An unrelated write to an old "Copilot on" row keeps Copilot: the migrated value is what is saved.
+    await store({ ...bare, provider: 'openai', copilot: { enabled: true, ...consent } });
+    await ai.update({ openai: { model: 'gpt-5.4' } }, LOCAL_USER_ID);
+    expect(await ai.read()).toMatchObject({ provider: 'copilot', openai: { model: 'gpt-5.4' }, copilot: { enabled: true } });
+    expect(await db.prisma.systemSettings.findUnique({ where: { key: DESKTOP_AI_NAMESPACE } })).toMatchObject({
+      value: { provider: 'copilot', copilot: { enabled: true } },
+    });
   });
 
   it('loads nothing while Copilot is off: no adapter, no runtime, no SDK, no Copilot host in the egress list', async () => {
@@ -504,12 +595,20 @@ describe('GitHub Copilot add-on', () => {
       controller.copilotUpdate(PRINCIPAL, { enabled: true, consentedAt: new Date().toISOString(), consentVersion: '0-old' }),
     ).rejects.toMatchObject({ status: 409, response: { code: 'consent_required' } });
     await expect(controller.patch(PRINCIPAL, { copilot: { enabled: true } })).rejects.toMatchObject({ status: 409, response: { code: 'consent_required' } });
+    await expect(controller.patch(PRINCIPAL, { provider: 'copilot' })).rejects.toMatchObject({ status: 409, response: { code: 'consent_required' } });
+    await expect(controller.patch(PRINCIPAL, { provider: 'copilot', copilot: { consentVersion: '0-old', consentedAt: new Date().toISOString() } })).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'consent_required', details: { consentVersion: COPILOT_CONSENT_VERSION } },
+    });
     await expect(controller.copilotUpdate(PRINCIPAL, { enabled: 'yes' })).rejects.toMatchObject({ status: 400 });
-    expect((await ai.read()).copilot.enabled).toBe(false);
+    expect(await ai.read()).toMatchObject({ provider: 'openai', copilot: { enabled: false, consentedAt: null } });
     expect(calls.prepared).toBe(0);
 
+    // Accepting writes the consent together with `enabled: true`, which IS choosing Copilot.
     const status = await controller.copilotUpdate(PRINCIPAL, currentConsent());
     expect(status).toMatchObject({ enabled: true, runtime: { state: 'ready', version: '1.0.98' } });
+    expect(await ai.read()).toMatchObject({ provider: 'copilot', copilot: { enabled: true, consentVersion: COPILOT_CONSENT_VERSION } });
+    expect(ai.copilot.ready).toBe(true);
     expect(calls.prepared).toBe(1);
     expect(calls.transports).toBe(1);
     expect(providers.adapters.copilot).toBeUndefined(); // the runtime's map is the instance's own copy
@@ -529,7 +628,58 @@ describe('GitHub Copilot add-on', () => {
     await controller.copilotUpdate(PRINCIPAL, { model: null });
     expect((await ai.read()).copilot).toEqual({ ...before, model: null });
     expect(await controller.copilotUpdate(PRINCIPAL, { enabled: false })).toMatchObject({ enabled: false });
-    expect((await ai.read()).copilot).toMatchObject({ enabled: false, model: null, consentVersion: before.consentVersion });
+    expect(await ai.read()).toMatchObject({ provider: 'openai', copilot: { enabled: false, model: null, consentVersion: before.consentVersion } });
+  });
+
+  it('switching to another provider takes Copilot down but keeps the consent; switching back needs no new consent', async () => {
+    const { ai, controller, calls } = setup();
+    await enableCopilot(ai, LOCAL_USER_ID, { model: GPT });
+    const consented = (await ai.read()).copilot;
+    expect(ai.copilot.ready).toBe(true);
+
+    await ai.update({ provider: 'openai' }, LOCAL_USER_ID);
+    expect(await ai.read()).toMatchObject({ provider: 'openai', copilot: { ...consented, enabled: false } });
+    expect(ai.copilot.ready).toBe(false);
+    expect(calls.stopped).toBe(1);
+    expect(await controller.copilotStatus()).toMatchObject({ enabled: false });
+
+    // Back to Copilot, by either route, with no consent in the request.
+    await ai.update({ provider: 'copilot' }, LOCAL_USER_ID);
+    expect(await ai.read()).toMatchObject({ provider: 'copilot', copilot: { ...consented, enabled: true } });
+    expect(ai.copilot.ready).toBe(true);
+    await ai.update({ provider: 'openai-compatible', openaiCompatible: { baseUrl: 'http://127.0.0.1:1/v1', model: 'm' } }, LOCAL_USER_ID);
+    expect(ai.copilot.ready).toBe(false);
+    expect(await controller.copilotUpdate(PRINCIPAL, { enabled: true })).toMatchObject({ enabled: true });
+    expect((await ai.read()).provider).toBe('copilot');
+    expect(ai.copilot.ready).toBe(true);
+  });
+
+  it('withdrawing the consent while Copilot is the provider returns to OpenAI; a later choice asks again', async () => {
+    const { ai, controller } = setup();
+    await enableCopilot(ai, LOCAL_USER_ID);
+
+    const status = await controller.copilotUpdate(PRINCIPAL, { enabled: false, consentedAt: null, consentVersion: null });
+    expect(status).toMatchObject({ enabled: false });
+    expect(await ai.read()).toMatchObject({ provider: 'openai', copilot: { enabled: false, consentedAt: null, consentVersion: null } });
+    expect(ai.copilot.ready).toBe(false);
+    await expect(controller.copilotUpdate(PRINCIPAL, { enabled: true })).rejects.toMatchObject({ status: 409, response: { code: 'consent_required' } });
+    expect((await ai.read()).provider).toBe('openai');
+  });
+
+  it('keeps provider and copilot.enabled one fact: the provider wins over a stale enabled in the same patch', async () => {
+    const { ai } = setup();
+    await enableCopilot(ai, LOCAL_USER_ID);
+    // Leaving Copilot while the same body still says enabled: true.
+    await ai.update({ provider: 'openai', copilot: { enabled: true } }, LOCAL_USER_ID);
+    expect(await ai.read()).toMatchObject({ provider: 'openai', copilot: { enabled: false } });
+    expect(ai.copilot.ready).toBe(false);
+    // `enabled: false` while another provider is chosen changes nothing else.
+    await ai.update({ provider: 'openai-compatible', openaiCompatible: { baseUrl: 'http://127.0.0.1:1/v1', model: 'm' } }, LOCAL_USER_ID);
+    await ai.updateCopilot({ enabled: false }, LOCAL_USER_ID);
+    expect((await ai.read()).provider).toBe('openai-compatible');
+    // Giving the consent alone does not choose Copilot.
+    await ai.updateCopilot({ consentedAt: new Date().toISOString(), consentVersion: COPILOT_CONSENT_VERSION }, LOCAL_USER_ID);
+    expect(await ai.read()).toMatchObject({ provider: 'openai-compatible', copilot: { enabled: false } });
   });
 
   it('lets the runtime reach the API host of each Copilot plan while Copilot is on, and none while it is off', async () => {
@@ -546,7 +696,7 @@ describe('GitHub Copilot add-on', () => {
   });
 
   it('asks again when the consent text changes: an older consent version is off', async () => {
-    const { ai, controller, calls } = setup();
+    const { ai, controller, calls, guard } = setup();
     await ai.updateCopilot(currentConsent(), LOCAL_USER_ID);
     // A newer text: the stored consent no longer matches.
     await settings.patchSystem(DESKTOP_AI_NAMESPACE, { copilot: { consentVersion: '0-older' } }, { actorUserId: LOCAL_USER_ID });
@@ -554,6 +704,15 @@ describe('GitHub Copilot add-on', () => {
     await ai.start();
     expect(ai.copilot.ready).toBe(false);
     expect(calls.stopped).toBeGreaterThan(0);
+
+    // Copilot stays the chosen provider but is inactive: nothing of it reaches, and the user is asked again.
+    expect((await ai.read()).provider).toBe('copilot');
+    await ai.applyEgress();
+    for (const host of COPILOT_EGRESS_HOSTS) expect(guard.isAllowed(host)).toBe(false);
+    await expect(ai.updateCopilot({ model: GPT }, LOCAL_USER_ID)).rejects.toMatchObject({ status: 409, response: { code: 'consent_required' } });
+    await controller.copilotUpdate(PRINCIPAL, currentConsent());
+    expect(ai.copilot.ready).toBe(true);
+    expect(await controller.copilotStatus()).toMatchObject({ enabled: true });
   });
 
   it('reports a missing runtime as a state, and refuses sign-in and download politely', async () => {
@@ -649,9 +808,10 @@ describe('GitHub Copilot add-on', () => {
     expect(transport.signInCalls().aborted).toBe(1);
   });
 
-  it('generates a note on Copilot with the selected model, and the OpenAI side is never called', async () => {
+  it('generates a note on Copilot with the selected model, and the other providers are never called', async () => {
     const { ai, transport } = setup({ signedIn: true });
-    await ai.update({ provider: 'openai-compatible', openaiCompatible: { baseUrl: mock.baseUrl, model: 'mock-model', requiresKey: false } }, LOCAL_USER_ID);
+    await ai.update({ openaiCompatible: { baseUrl: mock.baseUrl, model: 'mock-model', requiresKey: false } }, LOCAL_USER_ID);
+    await ai.setKey('openai', PLANTED_KEY, LOCAL_USER_ID);
     await enableCopilot(ai, LOCAL_USER_ID, { model: CLAUDE });
     transport.queue({ kind: 'answer', text: '# Notes from Copilot\n' });
 
@@ -687,34 +847,128 @@ describe('GitHub Copilot add-on', () => {
     expect(prompted?.config.systemMessage.content).toContain('title');
   });
 
-  it('routes Ask to OpenAI when its key is saved, and reports it unavailable (needs_tool_calling) when it is not', async () => {
+  it('routes Ask to Copilot with no OpenAI key, and keeps it there when one is saved: the key serves only search by meaning', async () => {
     const { ai, controller, transport } = setup({ signedIn: true });
     await enableCopilot(ai, LOCAL_USER_ID);
     const askCtx = { ...CTX, feature: 'ask.respond' };
+    const searchCtx = { ...CTX, feature: 'search.embed' };
 
-    // No OpenAI key: Ask is listed, with the reason, and refused as a missing key.
+    // No OpenAI key: Ask is on Copilot, with tool calling, and nothing is reported missing.
     const status = await controller.copilotStatus();
-    expect(status.unavailableTasks).toEqual([{ task: 'ask.respond', reason: 'needs_tool_calling' }]);
-    expect((await controller.state(PRINCIPAL)).unavailableTasks).toEqual(status.unavailableTasks);
-    expect(await ai.port.capabilities(askCtx)).toMatchObject({ available: false, reason: 'ai_key_missing' });
-    await expect(ai.port.resolveTask(askCtx, 'ask.respond')).rejects.toMatchObject({ errorClass: 'key_missing' });
+    expect(status.unavailableTasks).toEqual([]);
+    expect((await controller.state(PRINCIPAL)).unavailableTasks).toEqual([]);
+    expect(await ai.port.capabilities(askCtx)).toMatchObject({ available: true, toolCalling: true });
+    expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'copilot', model: GPT });
+    // Search by meaning waits for the OpenAI key (Copilot has no embeddings).
+    expect(await ai.port.capabilities(searchCtx)).toMatchObject({ available: false, reason: 'ai_key_missing' });
 
-    // An OpenAI key: Ask goes to OpenAI, notes stay on Copilot.
+    // An OpenAI key: Ask and notes stay on Copilot; the embeddings go to OpenAI.
     await ai.setKey('openai', PLANTED_KEY, LOCAL_USER_ID);
     expect((await controller.copilotStatus()).unavailableTasks).toEqual([]);
-    expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'openai' });
-    expect(await ai.port.capabilities(askCtx)).toMatchObject({ available: true, toolCalling: true });
+    expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'copilot', model: GPT });
     expect(await ai.port.resolveTask(CTX, 'notes.generate')).toMatchObject({ provider: 'copilot' });
+    expect(await ai.port.capabilities(searchCtx)).toMatchObject({ available: true });
+    expect(await ai.port.resolveTask(searchCtx, 'search.embed')).toMatchObject({ provider: 'openai' });
     expect(transport.sessions()).toHaveLength(0);
+    expect(mock.requests).toHaveLength(0);
+
+    // Taking the key away leaves Ask where it was.
+    await ai.deleteKey('openai', LOCAL_USER_ID);
+    expect((await controller.copilotStatus()).unavailableTasks).toEqual([]);
+    expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'copilot' });
   });
 
-  it('with AI off as the primary provider, Copilot serves notes and Ask is not offered', async () => {
-    const { ai, controller } = setup({ signedIn: true });
-    await ai.update({ provider: null }, LOCAL_USER_ID);
+  it('runs an Ask tool step on Copilot: the call ends the step, the held session takes the output, and the answer follows', async () => {
+    const { ai, transport } = setup({ signedIn: true });
     await enableCopilot(ai, LOCAL_USER_ID);
-    expect((await controller.copilotStatus()).unavailableTasks.map((t) => t.task)).toEqual(['ask.respond']);
+    const askCtx = { ...CTX, feature: 'ask.respond' };
+    const target = await ai.port.resolveTask(askCtx, 'ask.respond');
+    const tools = [{ name: 'search', description: 'Searches the meetings.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'], additionalProperties: false } }];
+    const history = [
+      { role: 'system' as const, content: 'Answer from the tools.' },
+      { role: 'user' as const, content: 'Who is Joe?' },
+    ];
+    const run = async (messages: Parameters<typeof ai.port.chat>[1]['messages']) => {
+      const events = [];
+      for await (const event of ai.port.chat(askCtx, { target, messages, tools, toolChoice: 'auto' })) events.push(event);
+      return events;
+    };
+
+    transport.queue({ kind: 'toolCalls', calls: [{ name: 'search', arguments: { query: 'Joe' }, toolCallId: 'call-1' }] });
+    transport.queue({ kind: 'answer', text: 'Joe sends the budget by Friday.' });
+    const first = await run(history);
+    expect(first.filter((event) => event.type === 'tool_call')).toEqual([{ type: 'tool_call', id: 'call-1', name: 'search', arguments: { query: 'Joe' } }]);
+    expect(ai.copilot.providerAdapter?.bridge.heldSessions()).toBe(1);
+
+    const second = await run([
+      ...history,
+      { role: 'assistant', content: null, toolCalls: [{ id: 'call-1', name: 'search', arguments: { query: 'Joe' } }] },
+      { role: 'tool', toolCallId: 'call-1', content: '{"hits":["Joe: budget by Friday"]}' },
+    ]);
+    expect(second.flatMap((event) => (event.type === 'delta' ? [event.text] : [])).join('')).toBe('Joe sends the budget by Friday.');
+    const sessions = transport.sessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ continuations: 1, deleted: true });
+    expect(sessions[0]?.config.model).toBe(GPT);
+    expect(sessions[0]?.toolRuns).toEqual([{ toolCallId: 'call-1', name: 'search', arguments: { query: 'Joe' }, output: '{"hits":["Joe: budget by Friday"]}' }]);
+    expect(mock.requests).toHaveLength(0);
+  });
+
+  it('closes the sessions the tool bridge holds when Copilot stops (server shutdown)', async () => {
+    const { ai, transport, calls } = setup({ signedIn: true });
+    await enableCopilot(ai, LOCAL_USER_ID);
+    const askCtx = { ...CTX, feature: 'ask.respond' };
+    const target = await ai.port.resolveTask(askCtx, 'ask.respond');
+    const tools = [{ name: 'search', description: 'Searches the meetings.', parameters: { type: 'object', properties: {}, additionalProperties: false } }];
+    transport.queue({ kind: 'toolCalls', calls: [{ name: 'search', toolCallId: 'call-1' }] });
+    for await (const _event of ai.port.chat(askCtx, { target, messages: [{ role: 'user', content: 'Who is Joe?' }], tools, toolChoice: 'auto' })) {
+      // drain the step
+    }
+    const adapter = ai.copilot.providerAdapter;
+    expect(adapter?.bridge.heldSessions()).toBe(1);
+    expect(transport.sessions()[0]?.deleted).toBe(false);
+
+    await ai.close();
+    expect(adapter?.bridge.heldSessions()).toBe(0);
+    expect(transport.sessions()[0]).toMatchObject({ deleted: true });
+    expect(calls.stopped).toBe(1);
+  });
+
+  it('a Copilot model the live listing marks as tool-less: Ask falls back to the OpenAI slot (never the compatible server), else is reported unavailable', async () => {
+    const toolless = [
+      { id: GPT, name: 'GPT-5 mini', capabilities: { supports: { toolCalls: false } } },
+      { id: CLAUDE, name: 'Claude Haiku 4.5' },
+    ];
+    const { ai, controller } = setup({ signedIn: true, models: toolless });
+    await ai.update({ provider: 'openai-compatible', openaiCompatible: { baseUrl: mock.baseUrl, model: 'mock-model', requiresKey: false } }, LOCAL_USER_ID);
+    const askCtx = { ...CTX, feature: 'ask.respond' };
+    expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'openai-compatible', model: 'mock-model' });
+
+    await enableCopilot(ai, LOCAL_USER_ID, { model: GPT });
+    expect((await controller.copilotStatus()).unavailableTasks).toEqual([{ task: 'ask.respond', reason: 'needs_tool_calling' }]);
+    await expect(ai.port.resolveTask(askCtx, 'ask.respond')).rejects.toMatchObject({ errorClass: 'key_missing' });
+    await ai.setKey('openai', PLANTED_KEY, LOCAL_USER_ID);
+    expect((await controller.copilotStatus()).unavailableTasks).toEqual([]);
+    expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'openai', model: DEFAULT_DESKTOP_AI_SETTINGS.openai.model });
+    expect(await ai.port.resolveTask(CTX, 'notes.generate')).toMatchObject({ provider: 'copilot', model: GPT });
+
+    // A model that can call tools takes Ask back onto Copilot.
+    await ai.updateCopilot({ model: CLAUDE }, LOCAL_USER_ID);
+    expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'copilot', model: CLAUDE });
+    expect(mock.requests).toHaveLength(0);
+
+    // Leaving Copilot: everything is the compatible server again, as before Copilot.
+    await ai.update({ provider: 'openai-compatible' }, LOCAL_USER_ID);
+    expect(await ai.port.resolveTask(askCtx, 'ask.respond')).toMatchObject({ provider: 'openai-compatible', model: 'mock-model' });
+    expect(await ai.unavailableTasks()).toEqual([]);
+  });
+
+  it('with Copilot chosen and no OpenAI key, Copilot serves notes and Ask, and nothing is reported missing', async () => {
+    const { ai, controller } = setup({ signedIn: true });
+    await enableCopilot(ai, LOCAL_USER_ID);
+    expect((await controller.copilotStatus()).unavailableTasks).toEqual([]);
     expect(await ai.port.capabilities(CTX)).toMatchObject({ available: true });
-    expect((await ai.port.capabilities({ ...CTX, feature: 'ask.respond' })).toolCalling).toBe(false);
+    expect(await ai.port.capabilities({ ...CTX, feature: 'ask.respond' })).toMatchObject({ available: true, toolCalling: true });
   });
 
   it('signed out: generating is refused as a missing key before anything is sent', async () => {
@@ -725,23 +979,59 @@ describe('GitHub Copilot add-on', () => {
     expect(transport.sessions()).toHaveLength(0);
   });
 
-  it('adds the Copilot hosts to the egress allowlist only while Copilot is on, and takes the adapter down when it is off', async () => {
+  it('allows the Copilot hosts only while Copilot is the provider, and api.openai.com with it only while an OpenAI key is stored', async () => {
     const { ai, guard, calls, controller } = setup();
     await ai.applyEgress();
     expect(guard.allowedHosts).toEqual(['api.openai.com']);
 
+    // Copilot, no OpenAI key: the Copilot hosts alone.
     await enableCopilot(ai, LOCAL_USER_ID);
-    expect(guard.allowedHosts).toEqual(['api.openai.com', ...COPILOT_EGRESS_HOSTS]);
+    expect(guard.allowedHosts).toEqual([...COPILOT_EGRESS_HOSTS]);
+    expect(guard.isAllowed('api.openai.com')).toBe(false);
     expect((await controller.copilotStatus()).enabled).toBe(true);
     expect(ai.copilot.ready).toBe(true);
 
-    await ai.updateCopilot({ enabled: false }, LOCAL_USER_ID);
+    // An OpenAI key added (and removed) while Copilot is the provider moves its host on (and off) at once.
+    await ai.setKey('openai', PLANTED_KEY, LOCAL_USER_ID);
+    expect(guard.allowedHosts).toEqual([...COPILOT_EGRESS_HOSTS, 'api.openai.com']);
+    expect((await controller.copilotStatus()).allowedHosts).toEqual([...COPILOT_EGRESS_HOSTS, 'api.openai.com']);
+    await ai.deleteKey('openai', LOCAL_USER_ID);
+    expect(guard.allowedHosts).toEqual([...COPILOT_EGRESS_HOSTS]);
+    await ai.setKey('openai', PLANTED_KEY, LOCAL_USER_ID);
+    expect(guard.isAllowed('api.openai.com')).toBe(true);
+
+    // Another provider: only its host, whatever Copilot's consent and the keys.
+    await ai.update({ provider: 'openai' }, LOCAL_USER_ID);
     expect(guard.allowedHosts).toEqual(['api.openai.com']);
     for (const host of COPILOT_EGRESS_HOSTS) expect(guard.isAllowed(host)).toBe(false);
     expect(ai.copilot.ready).toBe(false);
     expect(calls.stopped).toBe(1);
     expect(await controller.copilotStatus()).toMatchObject({ enabled: false, models: [] });
     await expect(controller.copilotSignIn()).rejects.toMatchObject({ status: 409, response: { code: 'copilot_disabled' } });
+
+    // An OpenAI key changing while another provider is chosen leaves the allowlist alone.
+    await ai.update({ provider: 'openai-compatible', openaiCompatible: { baseUrl: 'https://llm.corp.example/v1', model: 'm' } }, LOCAL_USER_ID);
+    await ai.deleteKey('openai', LOCAL_USER_ID);
+    expect(guard.allowedHosts).toEqual(['llm.corp.example']);
+  });
+
+  it('explains a blocked OpenAI key test while Copilot is the provider and no key is saved yet', async () => {
+    const harness = mockCopilotHost();
+    const guard = new EgressGuard({ logError: (line) => logLines.push(line) });
+    const ai = new DesktopAi({
+      settings,
+      secrets,
+      adapters: providers.adapters,
+      copilot: harness.host,
+      onAllowedHosts: (hosts) => guard.allow(hosts),
+      checkEgress: (host) => guard.check(host),
+    });
+    created.push(ai);
+    await enableCopilot(ai, LOCAL_USER_ID);
+    const result = await ai.testKey('openai', PLANTED_KEY);
+    expect(result.success).toBe(false);
+    expect(result.checks[0]?.detail).toMatch(/blocked the connection to api\.openai\.com.*Copilot.*Save the key/);
+    expect(JSON.stringify(result)).not.toContain('PLANTEDkvox584');
   });
 
   it('removes the Copilot data only with Copilot off, and keeps the downloaded runtime unless asked', async () => {
