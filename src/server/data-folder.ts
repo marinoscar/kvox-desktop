@@ -37,6 +37,8 @@ export interface DataFolder {
   readonly tmp: string;
   /** The Copilot runtime's private directory. Excluded from backups and exports. */
   readonly copilot: string;
+  /** The on-device embedding model's folder. Excluded from backups and exports. */
+  readonly models: string;
   readonly uploadParts: string;
   readonly restoreStaging: string;
   readonly restorePending: string;
@@ -55,6 +57,7 @@ export function dataFolder(root: string): DataFolder {
     settings: join(root, 'settings.json'),
     tmp: join(root, 'tmp'),
     copilot: join(root, 'copilot'),
+    models: join(root, 'models'),
     uploadParts: join(root, 'tmp', 'parts'),
     restoreStaging: join(root, 'restore-staging'),
     restorePending: join(root, 'restore-pending'),

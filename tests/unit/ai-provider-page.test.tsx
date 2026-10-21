@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { COPILOT_CONSENT_VERSION } from '@marinoscar/kvox-contract/copilot';
@@ -167,7 +168,9 @@ function install(initial: Partial<FakeState> = {}): { state: FakeState; requests
 function renderPage(): void {
   render(
     <KvoxWebHostProvider host={createDesktopHost(CONNECTION, true)}>
-      <AiProviderCard />
+      <MemoryRouter>
+        <AiProviderCard />
+      </MemoryRouter>
     </KvoxWebHostProvider>,
   );
 }

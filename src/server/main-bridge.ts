@@ -13,9 +13,16 @@ import type { SecretCipher } from './ports/safe-storage-secrets.js';
 //
 // A migration command (`run-node`) is the same pattern without a timeout: the
 // main process forks a utility process, which ends on its own (marinoscar/kvox#587).
+//
+// An `embed` request (marinoscar/kvox#660) is answered by `embed-result`: the main
+// process forwards the texts to the long-lived embedder utility process, which
+// blocks its own event loop while the model runs (never the server's).
 // =============================================================================
 
 const TIMEOUT_MS = 30_000;
+
+/** The longest an embed request waits: loading the model plus 32 chunks is well under a minute; this is the backstop. */
+const EMBED_TIMEOUT_MS = 5 * 60_000;
 
 /** The server's side of the main-process services. */
 export class MainBridge {
@@ -24,6 +31,8 @@ export class MainBridge {
 
   constructor(private readonly send: (message: FromServer) => void) {}
 
+  private readonly embeds = new Map<number, { resolve: (vectors: number[][]) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
+
   private readonly scripts = new Map<number, (result: { code: number | null; output: string }) => void>();
 
   /** Routes a `secrets-result` or a `run-node-result`; answers false for any other message. */
@@ -31,6 +40,15 @@ export class MainBridge {
     if (message.type === 'run-node-result') {
       this.scripts.get(message.id)?.({ code: message.code, output: message.output });
       this.scripts.delete(message.id);
+      return true;
+    }
+    if (message.type === 'embed-result') {
+      const waiting = this.embeds.get(message.id);
+      if (!waiting) return true;
+      this.embeds.delete(message.id);
+      clearTimeout(waiting.timer);
+      if (message.ok) waiting.resolve(message.vectors);
+      else waiting.reject(new Error(message.error));
       return true;
     }
     if (message.type !== 'secrets-result') return false;
@@ -68,6 +86,20 @@ export class MainBridge {
     return new Promise((resolve) => {
       this.scripts.set(id, resolve);
       this.send({ type: 'run-node', id, ...request });
+    });
+  };
+
+  /** Embeds `texts` with the on-device model installed at `modelPath`, in the main process's embedder utility process. */
+  readonly embed = (modelPath: string, texts: string[]): Promise<number[][]> => {
+    const id = this.nextId++;
+    return new Promise<number[][]>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.embeds.delete(id);
+        reject(new Error('The on-device embedder did not answer in time'));
+      }, EMBED_TIMEOUT_MS);
+      timer.unref();
+      this.embeds.set(id, { resolve, reject, timer });
+      this.send({ type: 'embed', id, modelPath, texts });
     });
   };
 

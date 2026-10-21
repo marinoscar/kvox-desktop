@@ -7,7 +7,7 @@ Single-user, offline-first desktop application for meeting notes and a personal 
 - Inputs: PDF transcripts, KVox transcript export JSON, Markdown or text, and KVox note exports. There is no transcription ([ADR-0006](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0006-desktop-inputs-no-transcription.md)).
 - Outputs: AI notes, a connected-knowledge graph, search, and Ask.
 - AI: one provider, your choice of three, never off: OpenAI, an OpenAI-compatible base URL, or GitHub Copilot ([ADR-0005](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0005-ai-architecture-shared-harness.md)).
-- Data stays on the device. The AI provider is the only cloud egress ([ADR-0004](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0004-desktop-data-local-only.md)).
+- Data stays on the device. The AI provider is the only cloud egress, plus two one-time, opt-in downloads you start yourself (the on-device search model, the Copilot runtime) ([ADR-0004](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0004-desktop-data-local-only.md)).
 
 ## Core principle
 
@@ -86,6 +86,7 @@ Everything KVox keeps lives there, and nowhere else ([ADR-0004](https://github.c
 | `secrets.bin` | Saved API keys, each an Electron `safeStorage` blob (OS keychain, DPAPI or Secret Service) |
 | `settings.json` | The shell's own preferences: the plaintext-keys consent below, and "Check for updates" (off unless you turn it on) |
 | `tmp/` | Scratch files and upload parts; emptied at every start |
+| `models/` | Only if you turn on on-device search: the embedding model (`models/bge-small-en-v1.5-int8/`, about 33 MB), downloaded once after your consent. Never in a backup; delete it from Settings or by hand and it is simply downloaded again (see [Network and privacy: on-device search](#network-and-privacy-on-device-search)) |
 | `copilot/` | Only if you choose GitHub Copilot: its private state (`home/`: sessions and sign-in material, `work/`: an empty working directory) and the downloaded runtime (`runtime/<version>/`). Never in a backup (see [Network and privacy: GitHub Copilot](#network-and-privacy-github-copilot)) |
 
 Saved keys never rest in the clear. On Linux without a keyring, Electron falls back to its `basic_text` backend; KVox then refuses to save a key (HTTP 409, `secret_storage_plaintext`) and Settings > Data and privacy shows a warning. Keys are saved only after you set up a keyring or explicitly accept plaintext storage there.
@@ -98,9 +99,29 @@ What leaves the device:
 No telemetry, no crash upload, no remote fonts. Both processes enforce it:
 
 - **Window**: the page's CSP allows only loopback (`connect-src http://127.0.0.1:*`), and the session cancels any request that is not loopback, `kvox:`, `file:`, `data:`, `blob:` or `devtools:`.
-- **Server**: a global undici dispatcher (for `fetch`) and a guard on every outgoing socket (`http`, `https`, `tls`, `net`) allow loopback and the chosen AI provider's host only: `api.openai.com` for OpenAI, the base URL's host for an OpenAI-compatible server (none at all for one on this device), the Copilot hosts for GitHub Copilot, plus `api.openai.com` there only while an OpenAI key is saved (for the embeddings of search by meaning). Saving the AI settings replaces the allowlist at once.
+- **Server**: a global undici dispatcher (for `fetch`) and a guard on every outgoing socket (`http`, `https`, `tls`, `net`) allow loopback and the chosen AI provider's host only: `api.openai.com` for OpenAI, the base URL's host for an OpenAI-compatible server (none at all for one on this device), the Copilot hosts for GitHub Copilot, plus `api.openai.com` there only while an OpenAI key is saved (for the embeddings of search by meaning). Saving the AI settings replaces the allowlist at once. Two downloads you start yourself widen it, each only while it runs: the Copilot runtime (below) and the on-device search model ([Network and privacy: on-device search](#network-and-privacy-on-device-search)).
 
 Every blocked request is an error line in the log with the host only (`window: egress blocked: example.com`, `server: egress blocked: example.com`), plus a running count. The loopback server requires a per-launch token. For fully offline use, point the OpenAI-compatible base URL at a local model server (Ollama, LM Studio).
+
+### Network and privacy: on-device search
+
+Semantic search (finding a note by meaning, not by its words) can run on a small model on your own machine, so it works with no API key and with no network. It is opt-in and off by default (marinoscar/kvox#660). While it is off nothing is downloaded, no process exists and search is full-text, or OpenAI-backed if you have an OpenAI key.
+
+- **A download, once, after your consent.** The model is `bge-small-en-v1.5` (int8, MIT licence), 34.7 MB in three files (`model.onnx`, `tokenizer.json`, `tokenizer_config.json`). The only thing that starts the download is `POST /api/desktop/ai/local-search/download` with `{ "consent": true }`, which is also what records your consent (`desktopAi.localSearch.consentedAt`). Without that body it answers 409 `consent_required` and nothing is contacted.
+- **Where from.** `huggingface.co` and Hugging Face's CDN hosts (`LOCAL_EMBEDDING_DOWNLOAD_HOSTS` of `@marinoscar/kvox-ai/local-embeddings`: `huggingface.co`, `us.aws.cdn.hf.co`, `us.gcp.cdn.hf.co`, `eu.aws.cdn.hf.co`, `eu.gcp.cdn.hf.co`, `cas-bridge.xethub.hf.co`), https only, every redirect hop checked against that list. The files are pinned to one Hugging Face commit and each must match its SHA-256 and exact size in the package, or nothing is installed. The hosts are added to the server's allowlist when the download starts and dropped when it ends, however it ends (finished, cancelled, failed); a cancelled or failed download leaves nothing behind and switches the feature back off.
+- **Afterwards, no network at all.** Embedding runs in a utility process of its own (`out/main/embedder.js`, started on the first search or indexing request, stopped after five idle minutes, always at quit), on the CPU, with no network access of its own, and only on text that is already on this device. Your notes and transcripts are never sent anywhere for this.
+- **What it serves.** Only the search feature's embeddings. The knowledge graph's own similarity checks keep using the configured provider. Switching it on indexes your library in the background (about two chunks per second on one CPU thread, one document at a time; the job queue shows `search.index` jobs); switching it off returns search to what it was.
+- **Stored where.** `models/` in the data folder, excluded from Export data and untouched by Restore. **Remove** (`DELETE /api/desktop/ai/local-search`) deletes it and switches the feature off.
+
+Endpoints (behind the launch token, in `src/server/desktop-ai.controller.ts`; every answer is `{ enabled, active, consentedAt, state, progress, error, model, sizeBytes, hosts }`, `state` being `missing`, `downloading`, `ready` or `error`):
+
+| Endpoint | Does |
+|---|---|
+| `GET /api/desktop/ai/local-search` | The status |
+| `POST /api/desktop/ai/local-search/download` | `{ "consent": true }`: records the consent, switches the feature on, downloads (202) |
+| `DELETE /api/desktop/ai/local-search/download` | Cancels the download and switches the feature off |
+| `PATCH /api/desktop/ai/local-search` | `{ "enabled": boolean }`; on needs the installed model (409 `model_not_ready`) and the consent (409 `consent_required`) |
+| `DELETE /api/desktop/ai/local-search` | Removes the model and switches the feature off |
 
 ### Network and privacy: GitHub Copilot
 
@@ -235,7 +256,7 @@ GitHub Copilot (marinoscar/kvox-desktop#21) is loaded only while it is the chose
 
 The key block is the platform's `UserAiKeyCard` (`KeylessProviderCard` for a keyless server), the card KVox web shows. **Save & verify** and **Test** run on the local server, never in the window: `POST /api/desktop/ai/keys/:provider/test` calls the adapter's `verifyKey` (and `listModels` for the count) with the typed key, or the stored one when none is typed, and answers a verdict in the platform's `AiProbeResult` shape (HTTP 200; `success` is the answer). The key goes to the provider and nowhere else: not into the answer, an error or a log line. A key the provider rejects is not stored; a host the egress guard refuses (a provider other than the one saved in Settings) is a readable failed check, not a socket error.
 
-The non-secret choices are the system settings namespace `desktopAi` (in the database, so they travel in a backup); keys are `KVOX_SECRETS` purpose `ai`, named after the provider, and never appear in a setting, a response, a log line or an error. Semantic search embeds with OpenAI's `text-embedding-3-small` (the packages' embedding catalog), so it needs an OpenAI key (the OpenAI provider, or the optional key under Copilot); otherwise search stays full-text.
+The non-secret choices are the system settings namespace `desktopAi` (in the database, so they travel in a backup); keys are `KVOX_SECRETS` purpose `ai`, named after the provider, and never appear in a setting, a response, a log line or an error. Semantic search has two sources. By default it embeds with OpenAI's `text-embedding-3-small` (the packages' embedding catalog), so it needs an OpenAI key (the OpenAI provider, or the optional key under Copilot); otherwise search stays full-text. Or, opt-in, it runs on a small model on this device (`bge-small-en-v1.5`, Settings > AI provider > On-device search), which needs no key and no network once downloaded: while it is on and installed, `search.embed` is served by a third port (`createKvoxAi` over `createLocalEmbeddingRuntime`, routed in `src/server/ai/routed-kvox-ai.ts`) and nothing else changes (the graph's `graph.embed` stays with the provider above, because its similarity thresholds are tuned to OpenAI's vectors). See [Network and privacy: on-device search](#network-and-privacy-on-device-search). The library is indexed by the search slice's own `requestIndex` (`src/server/search-backfill.ts`), asked when the model becomes ready, at start-up and on the hourly housekeeping tick: the package has no search cron because indexing spends your own API key, which a local model does not.
 
 ### Choosing GitHub Copilot
 
@@ -255,7 +276,8 @@ The end-to-end test `tests/e2e/copilot.spec.ts` walks this with the packages' mo
 ```
 src/main/        Electron main process: window, kvox:// scheme, window egress guard, server lifecycle,
                  safeStorage and Notification for the server, backup dialogs, import (dialog, dropped files),
-                 migration utility processes (node-scripts.ts), opt-in updates (updates.ts, update-policy.ts)
+                 migration utility processes (node-scripts.ts), the on-device embedder's utility process and its
+                 broker (embedder.ts, embedder-broker.ts), opt-in updates (updates.ts, update-policy.ts)
 src/preload/     Preload bridge (kvoxDesktop: connection, data folder, backup dialogs, secret storage, import, updates, theme mode, shell preferences, user-menu commands)
 src/renderer/    React app: KvoxAppShell with its bindings (App.tsx, shell.tsx), KvoxWebHost over loopback,
                  kvox-web notes, graph and Ask screens (routes.tsx),
@@ -393,6 +415,10 @@ Turning it off stops the timer and closes the session again. No user data is sen
 - **Application menu** (`src/main/menu.ts`). KVox's own, not Electron's default: File (New note, Import…, Settings, Quit), Edit, View (Toggle light/dark, zoom, full screen), Window and Help (About KVox with the Electron, Chromium, Node and `@marinoscar/*` versions, Open data folder, View licences, which opens the bundled `LICENSE.txt`). Reload and Developer Tools exist only when `!app.isPackaged`. No item opens a remote URL ([ADR-0004](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0004-desktop-data-local-only.md)); `tests/unit/menu.test.ts` walks the template for one. The menu sends the window `menu:navigate`, `menu:toggle-theme` and `menu:import` (`src/shared/protocol.ts`); the renderer validates the path (`parseMenuPath`) and acts (`src/renderer/src/MenuCommands.tsx`).
 - **macOS**: hardened runtime; one entitlement, `com.apple.security.cs.allow-jit` (V8 compiles JavaScript and WebAssembly, PGlite included, at run time). Not granted: unsigned executable memory, disabled library validation.
 - **Windows**: per-user NSIS (no admin), x64 and arm64 in one installer; the Prisma schema engine is x64 and runs emulated on arm64.
+
+### The on-device search runtime
+
+`onnxruntime-web` (1.30.0) and `@huggingface/tokenizers` (0.2.0) are pinned dependencies. `onnxruntime-web` ships about 140 MB of browser builds; Node's `require` loads three files of it, and `electron-builder.yml` packs only those (`dist/ort.node.min.js`, `dist/ort-wasm-simd-threaded.mjs`, `dist/ort-wasm-simd-threaded.wasm`; the model itself is not in the installer). The glue `.mjs` is loaded by a dynamic `import()`, so it is in `asarUnpack` and `src/main/embedder.ts` points the runtime at the unpacked copy. `node scripts/packaged-app.mjs verify` checks all of it (`embedderRuntimeProblems`), and `tests/unit/packaging.test.ts` pins the config.
 
 ### The Copilot runtime
 

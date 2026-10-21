@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
 import Chip from '@mui/material/Chip';
 import FormControlLabel from '@mui/material/FormControlLabel';
+import Link from '@mui/material/Link';
 import MenuItem from '@mui/material/MenuItem';
 import Radio from '@mui/material/Radio';
 import RadioGroup from '@mui/material/RadioGroup';
@@ -408,6 +410,15 @@ export function AiProviderCard() {
         </Typography>
         {setup}
       </Stack>
+
+      {/* Search by meaning needs no provider: the on-device model has its own page (marinoscar/kvox#660). */}
+      <Typography variant="body2" color="text.secondary">
+        Search by meaning can run on this device instead, with no API key:{' '}
+        <Link component={RouterLink} to="/settings/search">
+          Semantic search on this device
+        </Link>
+        .
+      </Typography>
 
       <Typography variant="body2" color="text.secondary">
         {hosts.length > 0 ? `Besides this device, KVox may connect only to: ${hosts.join(', ')}.` : 'KVox connects to nothing outside this device.'}

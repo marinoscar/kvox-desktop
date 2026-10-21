@@ -19,6 +19,10 @@ import { TranscriptsHousekeepingEnqueuer } from '@marinoscar/kvox-api/transcript
 //   KgMigrateEnqueuer                 `kg.migrate`, one job per owner a declared
 //                                     ontology migration touches (none declared: returns at once)
 //   KgExportExpiryEnqueuer            the `kg.export` expiry sweep
+//   searchBackfill (host option)      indexes the library for ON-DEVICE semantic search while it is
+//                                     on (marinoscar/kvox#660; `search-backfill.ts`). The search slice
+//                                     has no cron of its own because indexing spends the user's key; a
+//                                     local model costs nothing, so the host asks on this timer.
 //
 // The enqueuers live in the slices' modules, so they are resolved with
 // `strict: false`. The first tick runs shortly after start (a desktop app is
@@ -31,6 +35,8 @@ export interface HousekeepingTick {
   notes: string | null;
   kgMigrate: 'called';
   kgExportExpiry: 'called';
+  /** `skipped` when the host has no on-device search backfill. */
+  searchIndex: 'called' | 'skipped';
 }
 
 /** The housekeeping of the local server. */
@@ -44,10 +50,11 @@ export class Housekeeping {
    * @param options.intervalMs - the tick, default one hour.
    * @param options.firstTickMs - the delay of the first tick, default one minute.
    * @param options.log - receives a line per failed tick.
+   * @param options.searchBackfill - asks the search slice to index the library (a no-op unless on-device search is on).
    */
   constructor(
     private readonly app: INestApplicationContext,
-    private readonly options: { intervalMs?: number; firstTickMs?: number; log?: (line: string) => void } = {},
+    private readonly options: { intervalMs?: number; firstTickMs?: number; log?: (line: string) => void; searchBackfill?: () => Promise<void> } = {},
   ) {}
 
   /** Calls every enqueuer once, in order. Each only inserts job rows; the job loop runs them. */
@@ -57,7 +64,8 @@ export class Housekeeping {
     const notes = await get(NotesHousekeepingEnqueuer).enqueue();
     await get(KgMigrateEnqueuer).enqueue();
     await get(KgExportExpiryEnqueuer).enqueue();
-    return { transcripts, notes, kgMigrate: 'called', kgExportExpiry: 'called' };
+    if (this.options.searchBackfill) await this.options.searchBackfill();
+    return { transcripts, notes, kgMigrate: 'called', kgExportExpiry: 'called', searchIndex: this.options.searchBackfill ? 'called' : 'skipped' };
   }
 
   /** Starts the timer. */

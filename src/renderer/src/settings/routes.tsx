@@ -33,6 +33,7 @@ const ConnectedKnowledgePage = lazy(() => import('./ConnectedKnowledgeCard').the
 const NoteTemplatesPage = lazy(() => import('./NoteTemplatesPage').then((module) => ({ default: module.NoteTemplatesPage })));
 const DataPrivacyPage = lazy(() => import('./DataPrivacyCard').then((module) => ({ default: module.DataPrivacyCard })));
 const UpdatesPage = lazy(() => import('./UpdatesCard').then((module) => ({ default: module.UpdatesCard })));
+const LocalSearchPage = lazy(() => import('./LocalSearchCard').then((module) => ({ default: module.LocalSearchCard })));
 
 /** The page of each card. Append to the end, like the registry. */
 export const desktopSettingsRoutes: readonly DesktopSettingsRoute[] = [
@@ -41,6 +42,7 @@ export const desktopSettingsRoutes: readonly DesktopSettingsRoute[] = [
   { path: '/settings/note-templates', Component: NoteTemplatesPage, ownHeading: true },
   { path: '/settings/data', Component: DataPrivacyPage },
   { path: '/settings/updates', Component: UpdatesPage },
+  { path: '/settings/search', Component: LocalSearchPage },
 ];
 
 /** `/settings`: the registry's hub. */

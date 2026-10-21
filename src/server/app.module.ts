@@ -32,11 +32,16 @@ import { StorageObjectsController } from './storage-objects.controller.js';
 //   TranscriptionModule  NO provider at all (ADR-0006: Desktop has no
 //                        transcription); it is here because transcripts, a
 //                        peer of notes, needs it.
-//   SearchModule         full text (the AI binding offers no embeddings model)
+//   SearchModule         full text always; semantic search runs on the on-device
+//                        embedding model when the user switched it on (marinoscar/kvox#660,
+//                        `ai/local-embeddings.ts`), or on OpenAI's otherwise (a key)
 //   TranscriptsModule    no schedules, no transcode, no PDF exporter
-//   NotesModule          no schedules, no PDF/Word exporter; PDF, text and
-//                        Markdown documents are a source (`unpdf` reads a
-//                        PDF transcript, marinoscar/kvox#585)
+//   NotesModule          no schedules; Markdown, PDF and Word exports (the
+//                        packaged renderers, branded and offline: pdfkit
+//                        and docx, the fonts read from the package inside
+//                        app.asar); PDF, text and Markdown documents are a
+//                        source (`unpdf` reads a PDF transcript,
+//                        marinoscar/kvox#585)
 //   GraphModule          the connected-knowledge core (write, read, the brief,
 //                        the overview layout `kg.graph_layout` over the
 //                        graphology peers, `kg.migrate`, `kg.purge`,
@@ -89,7 +94,6 @@ export function createDesktopModule(options: DesktopModuleOptions): DynamicModul
   });
   const notes = NotesModule.forRoot({
     schedules: false,
-    exporters: { pdf: false, docx: false },
     peers: { transcripts, searchIndexing },
   });
   const search = SearchModule.forRoot();
