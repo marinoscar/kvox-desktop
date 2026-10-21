@@ -78,7 +78,7 @@ function settingsView(state: FakeState) {
         needsKey: state.openaiCompatible.requiresKey,
         key: keyStatus(state.keys['openai-compatible']),
       },
-      { id: 'copilot', label: 'GitHub Copilot', implemented: true, primary: true, toolCalling: false, note: 'Your Copilot subscription.', needsKey: false, key: null },
+      { id: 'copilot', label: 'GitHub Copilot', implemented: true, primary: true, toolCalling: true, note: 'Your Copilot subscription.', needsKey: false, key: null },
     ],
     allowedHosts: hostsOf(state),
   };
@@ -91,7 +91,8 @@ function copilotStatus(state: FakeState) {
     login: state.signedIn ? 'octocat' : null,
     runtime: { state: 'ready', version: '1.0.0', progress: null },
     models: [{ id: 'gpt-mock', label: 'GPT mock', structuredOutput: 'native' }],
-    unavailableTasks: state.keys.openai ? [] : [{ task: 'ask.respond', reason: 'needs_tool_calling' }],
+    // Copilot serves Ask; the embeddings (search by meaning) are never reported (desktop-ai.ts).
+    unavailableTasks: [],
     allowedHosts: hostsOf(state),
   };
 }
@@ -327,7 +328,7 @@ describe('setting up the chosen provider', () => {
     expect(screen.queryByLabelText('Base URL')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save server settings' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'GitHub Copilot sign-in' })).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Optional: an OpenAI key for Ask' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Optional: an OpenAI key for search by meaning' })).toBeNull();
 
     const save = screen.getByRole('button', { name: 'Save model' }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
@@ -345,7 +346,7 @@ describe('setting up the chosen provider', () => {
     await screen.findByRole('heading', { name: 'Set up OpenAI-compatible server' });
     expect(screen.queryByRole('region', { name: 'OpenAI-compatible server key' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'OpenAI key' })).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Optional: an OpenAI key for Ask' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Optional: an OpenAI key for search by meaning' })).toBeNull();
     expect(screen.getByText('KVox connects to nothing outside this device.')).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'http://127.0.0.1:11434/v1' } });
@@ -358,28 +359,32 @@ describe('setting up the chosen provider', () => {
     await screen.findByRole('region', { name: 'OpenAI-compatible server key' });
   });
 
-  it('Copilot: its card, then the optional OpenAI key for Ask', async () => {
+  it('Copilot: its card, then the optional OpenAI key for search by meaning (Ask runs on Copilot)', async () => {
     install({ provider: 'copilot', copilot: { enabled: true, consentedAt: '2026-10-01T00:00:00.000Z', consentVersion: COPILOT_CONSENT_VERSION, model: null } });
     renderPage();
     await screen.findByRole('heading', { name: 'Set up GitHub Copilot' });
     await screen.findByRole('region', { name: 'GitHub Copilot sign-in' });
-    const ask = screen.getByRole('region', { name: 'Optional: an OpenAI key for Ask' });
-    expect(within(ask).getByText(/Copilot can't run Ask, because Ask needs tool calling/)).toBeTruthy();
-    expect(within(ask).getByRole('region', { name: 'OpenAI key' })).toBeTruthy();
+    expect(within(group()).getByText('Uses your own GitHub Copilot subscription after you sign in.')).toBeTruthy();
+    const embeddings = screen.getByRole('region', { name: 'Optional: an OpenAI key for search by meaning' });
+    expect(within(embeddings).getByText(/GitHub Copilot runs notes, knowledge extraction, name checks and Ask\. Search by meaning needs embeddings/)).toBeTruthy();
+    expect(within(embeddings).getByRole('region', { name: 'OpenAI key' })).toBeTruthy();
+    // Nothing on the page says Ask needs OpenAI any more.
+    expect(screen.queryByText(/Ask needs an OpenAI key|can't run Ask/)).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Optional: an OpenAI key for Ask' })).toBeNull();
     expect(screen.queryByLabelText('Base URL')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save model' })).toBeNull();
     // Signed out: chosen, but not ready.
     expect(within(group()).getByText('Needs setup')).toBeTruthy();
   });
 
-  it('Copilot: the first OpenAI key for Ask is stored, then tested (the guard allows OpenAI only once a key is stored)', async () => {
+  it('Copilot: the first OpenAI key for search by meaning is stored, then tested (the guard allows OpenAI only once a key is stored)', async () => {
     const { requests, state } = install({
       provider: 'copilot',
       copilot: { enabled: true, consentedAt: '2026-10-01T00:00:00.000Z', consentVersion: COPILOT_CONSENT_VERSION, model: null },
     });
     renderPage();
-    const ask = await screen.findByRole('region', { name: 'Optional: an OpenAI key for Ask' });
-    const keyCard = within(ask).getByRole('region', { name: 'OpenAI key' });
+    const embeddings = await screen.findByRole('region', { name: 'Optional: an OpenAI key for search by meaning' });
+    const keyCard = within(embeddings).getByRole('region', { name: 'OpenAI key' });
     fireEvent.change(within(keyCard).getByLabelText('API key'), { target: { value: 'sk-test-0123456789abcdef' } });
     fireEvent.click(within(keyCard).getByRole('button', { name: 'Save & verify' }));
     await within(keyCard).findByText('Key verified and saved.');

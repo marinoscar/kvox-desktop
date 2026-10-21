@@ -29,7 +29,7 @@ import { createCopilotPort } from './copilotPort';
 // card saves. `onStatus` hands the page the status (the "Ready" chip, the hosts
 // footer); the page draws the one footer, so no `allowedHosts` here.
 // `refreshKey` re-reads the status when something outside the card changed it
-// (an OpenAI key saved for Ask).
+// (an OpenAI key saved for search by meaning).
 // =============================================================================
 
 export interface CopilotSectionProps {

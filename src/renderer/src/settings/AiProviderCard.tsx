@@ -40,7 +40,7 @@ import { allowedHostsOf } from './copilotPort';
 //                                and model; the compatible server's URL, model, wire
 //                                style and key; Copilot's packaged card
 //                                (`CopilotSection.tsx`) and, optional, the OpenAI key
-//                                Ask uses (Copilot offers no tool calling).
+//                                search by meaning uses (Copilot offers no embeddings).
 //   3. One footer                the hosts the egress guard allows now.
 //
 // Switching provider never deletes another provider's key or settings.
@@ -91,7 +91,7 @@ type Outcome = { severity: 'success' | 'error'; text: string };
 const DESCRIPTIONS: Record<ProviderId, string> = {
   openai: 'Uses your OpenAI API key.',
   'openai-compatible': 'A server on this computer or your network that speaks the OpenAI API: Ollama, LM Studio, vLLM or a gateway.',
-  copilot: 'Uses your own GitHub Copilot subscription after you sign in. Ask needs an OpenAI key.',
+  copilot: 'Uses your own GitHub Copilot subscription after you sign in.',
 };
 
 const NO_KEY: KeyStatus = { configured: false, hint: null, updatedAt: null };
@@ -127,7 +127,7 @@ export function AiProviderCard() {
   const [choosing, setChoosing] = useState<ProviderId | null>(null);
   const [choiceOutcome, setChoiceOutcome] = useState<Outcome | null>(null);
   const [copilotStatus, setCopilotStatus] = useState<CopilotStatus | null>(null);
-  // Bumped when an OpenAI key changes under Copilot: the card's capabilities (Ask) follow.
+  // Bumped when an OpenAI key changes under Copilot: the card's capabilities (search by meaning) follow.
   const [copilotRefresh, setCopilotRefresh] = useState(0);
   const viewRef = useRef<SettingsView | null>(null);
 
@@ -365,14 +365,14 @@ export function AiProviderCard() {
     setup = (
       <>
         <CopilotSection onStatus={onCopilotStatus} onChanged={onCopilotChanged} onDecline={declineCopilot} refreshKey={copilotRefresh} />
-        <Stack component="section" aria-labelledby="ai-copilot-ask-title" spacing={1.5}>
+        <Stack component="section" aria-labelledby="ai-copilot-embeddings-title" spacing={1.5}>
           <Box>
-            <Typography id="ai-copilot-ask-title" variant="subtitle1" component="h3" sx={{ fontWeight: 600 }}>
-              Optional: an OpenAI key for Ask
+            <Typography id="ai-copilot-embeddings-title" variant="subtitle1" component="h3" sx={{ fontWeight: 600 }}>
+              Optional: an OpenAI key for search by meaning
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Copilot can't run Ask, because Ask needs tool calling. Save an OpenAI API key and Ask will use OpenAI; everything else stays
-              on Copilot.
+              GitHub Copilot runs notes, knowledge extraction, name checks and Ask. Search by meaning needs embeddings, which Copilot does
+              not offer; save an OpenAI API key to turn it on.
             </Typography>
           </Box>
           {keyCard('openai')}

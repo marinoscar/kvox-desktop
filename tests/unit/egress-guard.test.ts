@@ -129,7 +129,7 @@ describe('the Copilot hosts follow the provider (marinoscar/kvox-desktop#21)', (
     expect(allowedHostsFor({ ...copilot(), provider: 'openai' })).toEqual(OPENAI);
   });
 
-  it('with Copilot chosen: the Copilot hosts, plus api.openai.com only when an OpenAI key is stored for Ask', () => {
+  it('with Copilot chosen: the Copilot hosts, plus api.openai.com only when an OpenAI key is stored for search by meaning', () => {
     expect(allowedHostsFor(copilot())).toEqual([...COPILOT_EGRESS_HOSTS]);
     expect(allowedHostsFor(copilot(), { openaiKey: false })).toEqual([...COPILOT_EGRESS_HOSTS]);
     expect(allowedHostsFor(copilot(), { openaiKey: true })).toEqual([...COPILOT_EGRESS_HOSTS, ...OPENAI]);
