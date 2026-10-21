@@ -25,10 +25,12 @@ import { COPILOT_RUNTIME_DOWNLOAD_HOSTS } from './copilot-sandbox.js';
 //                      the user's own subscription after they sign in. It can be
 //                      chosen only after the user's consent to the CURRENT text
 //                      ({@link copilotActive}). It serves the tasks it can (notes,
-//                      titles, graph extraction, the name check); the rest (Ask,
-//                      which needs tool calling, and the embeddings) go to the
-//                      OpenAI slot when an OpenAI key is stored, else they are
-//                      reported unavailable. Its models report toolCalling=false.
+//                      titles, graph extraction, the name check, and Ask through
+//                      the adapter's tool bridge); the rest (the embeddings of
+//                      search by meaning, and Ask for a model the live listing
+//                      marks as tool-less) go to the OpenAI slot when an OpenAI
+//                      key is stored, else they are reported unavailable. Its
+//                      models report toolCalling as the adapter's catalog does.
 //
 // `copilot.enabled` stays in the stored shape (the packaged Copilot card reads it
 // through `CopilotSettings`) but is DERIVED: always `provider === 'copilot'`. The
@@ -40,7 +42,7 @@ import { COPILOT_RUNTIME_DOWNLOAD_HOSTS } from './copilot-sandbox.js';
 //
 // THE EGRESS RULE: the server may reach exactly the active provider's host (with
 // Copilot: the Copilot hosts, plus api.openai.com only while an OpenAI key is stored
-// for Ask) ({@link allowedHostsFor}), besides loopback, which is always allowed.
+// for search by meaning) ({@link allowedHostsFor}), besides loopback, which is always allowed.
 // =============================================================================
 
 /** The KVOX_SETTINGS system namespace. */
@@ -85,9 +87,9 @@ export const DESKTOP_AI_PROVIDERS: readonly DesktopAiProviderSlot[] = [
     id: 'copilot',
     label: 'GitHub Copilot',
     implemented: true,
-    toolCalling: false,
+    toolCalling: true,
     primary: true,
-    note: 'Your own GitHub Copilot subscription, after you sign in. Ask needs an OpenAI API key.',
+    note: 'Your own GitHub Copilot subscription, after you sign in. Search by meaning needs an OpenAI API key.',
   },
 ];
 
@@ -195,7 +197,7 @@ export const DESKTOP_AI_SETTINGS_NAMESPACE: KvoxSettingsNamespaceDef = {
 };
 
 /**
- * The key-holding slot that serves the tasks Copilot cannot (Ask, the embeddings), or every
+ * The key-holding slot that serves the tasks Copilot cannot (the embeddings; Ask on a tool-less model), or every
  * task when Copilot is not the provider: the chosen slot, and `openai` while Copilot is chosen.
  */
 export function nonCopilotSlot(settings: DesktopAiSettings): SelectableAiProviderId {
@@ -243,7 +245,7 @@ export function allowedHostsFor(settings: DesktopAiSettings, options: { runtimeD
     if (copilotActive(settings)) {
       for (const host of COPILOT_EGRESS_HOSTS) add(host);
     }
-    // Ask and the embeddings go to OpenAI, but only once its key is stored.
+    // The embeddings (search by meaning) go to OpenAI, but only once its key is stored.
     if (options.openaiKey) add(OPENAI_HOST);
     // The one-time runtime download (the npm registry host), for as long as it runs.
     if (copilotActive(settings) && options.runtimeDownload) for (const host of COPILOT_RUNTIME_DOWNLOAD_HOSTS) add(host);

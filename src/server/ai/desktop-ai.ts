@@ -65,10 +65,13 @@ const COPILOT_ID = 'copilot';
 // THE PROVIDER IS ONE CHOICE OF THREE, NEVER OFF (OpenAI, an OpenAI-compatible
 // server, GitHub Copilot; marinoscar/kvox-desktop#21). While Copilot is chosen and
 // consented, `routeKvoxTasks` gives each task to Copilot when Copilot can serve it
-// (notes, titles, graph extraction, the name check) and else to the OPENAI slot
-// when an OpenAI key is stored (Ask, embeddings), else lists it as unavailable. Two
-// `createKvoxAi` ports (one per provider) sit behind `createRoutedKvoxAi`. With
-// OpenAI or the compatible server chosen, every task goes to it.
+// (notes, titles, graph extraction, the name check, and Ask through the adapter's
+// tool bridge: `toolCalling` comes from the adapter's catalog, per model) and else
+// to the OPENAI slot when an OpenAI key is stored (the embeddings of search by
+// meaning; Ask only for a model the live listing marks as tool-less), else lists it
+// as unavailable. Two `createKvoxAi` ports (one per provider) sit behind
+// `createRoutedKvoxAi`. With OpenAI or the compatible server chosen, every task goes
+// to it.
 // `copilot.enabled` is derived (`provider === 'copilot'`); `update` keeps it so.
 //
 // THE EGRESS RULE: every settings change, and every OpenAI key change while Copilot
@@ -225,7 +228,7 @@ export class DesktopAi {
       copilot: createKvoxAi({
         runtime,
         taskModels: this.copilotState,
-        // Per model: no tool calling, and whether structured output is native or prompted.
+        // Per model: whether it can call tools (Ask), and whether structured output is native or prompted.
         catalog: { lookup: (provider, model) => (provider === COPILOT_ID ? (this.copilot.providerAdapter?.kvox.catalog.lookup(provider, model) ?? null) : null) },
         ...timeout,
       }),
@@ -236,7 +239,7 @@ export class DesktopAi {
 
   /**
    * The egress allowlist under these settings (and the npm registry host while the runtime downloads).
-   * With Copilot as the provider it asks whether an OpenAI key is stored: Ask goes there.
+   * With Copilot as the provider it asks whether an OpenAI key is stored: search by meaning (the embeddings) goes there.
    */
   private async hostsFor(settings: DesktopAiSettings, runtimeDownload: boolean = this.copilot.downloading): Promise<string[]> {
     const openaiKey = settings.provider === 'copilot' && (await this.keyStatus('openai')).configured;
@@ -416,7 +419,7 @@ export class DesktopAi {
     if (refused) {
       const advice =
         settings.provider === 'copilot' && id === 'openai'
-          ? 'while GitHub Copilot is your AI provider, OpenAI can be reached only once its key is saved (Ask uses it). Save the key, then test again.'
+          ? 'while GitHub Copilot is your AI provider, OpenAI can be reached only once its key is saved (search by meaning uses it). Save the key, then test again.'
           : 'only the AI provider chosen in Settings can be reached. Select this provider and save, then test again.';
       return failed('AI_PROVIDER_UNAVAILABLE', `KVox blocked the connection to ${target}: ${advice}`);
     }
@@ -539,7 +542,7 @@ export class DesktopAi {
 
   // ---- Copilot: state, routing, status -------------------------------------------
 
-  /** The Copilot add-on's task-model state: its models, none of them with tool calling. */
+  /** The Copilot add-on's task-model state: its models, each with tool calling as the adapter's catalog reports it. */
   private async copilotModelState(): Promise<KvoxAiModelState> {
     const settings = await this.read();
     const limits = (await this.options.settings.readSystem<SliceAiSettings>('ai')).value;
@@ -562,12 +565,24 @@ export class DesktopAi {
         id: row.id,
         label: row.label,
         structuredOutput: true,
-        toolCalling: false,
+        toolCalling: this.copilotToolCalling(row.id),
         contextWindow: row.contextWindow,
         maxOutputTokens: row.maxOutputTokens,
         structuredOutputMode: row.structuredOutput,
       })),
     };
+  }
+
+  /**
+   * Whether a Copilot model can run Ask (the adapter's tool bridge): the adapter's catalog, per model
+   * (false only for a model the live listing marks as tool-less), else the adapter's `kvox.toolCalling`.
+   * With no adapter yet (the runtime is missing or downloading) nothing runs on Copilot at all, so
+   * Ask is routed with the other Copilot tasks instead of being reported for a missing capability.
+   */
+  private copilotToolCalling(model: string): boolean {
+    const adapter = this.copilot.providerAdapter;
+    if (!adapter) return true;
+    return adapter.kvox.catalog.lookup(COPILOT_ID, model)?.toolCalling ?? adapter.kvox.toolCalling;
   }
 
   /** The slot that serves what Copilot cannot, as a routing choice, or `null` when it cannot serve a call now (no model, no key). */
@@ -579,11 +594,14 @@ export class DesktopAi {
     return { provider, model, toolCalling: true, embeddings: true };
   }
 
-  /** Which tasks go where while Copilot is the provider: Copilot first, the OpenAI slot (when its key is stored) for the rest. */
+  /**
+   * Which tasks go where while Copilot is the provider: Copilot first (Ask included, unless the chosen
+   * model cannot call tools), the OpenAI slot (when its key is stored) for the rest: the embeddings.
+   */
   private async routing(settings: DesktopAiSettings): Promise<{ copilot: string; routes: ReturnType<typeof routeKvoxTasks> }> {
     const model = (await this.copilot.pickModel(settings.copilot.model)) ?? settings.copilot.model ?? '';
     const fallback = await this.fallbackChoice(settings);
-    const routes = routeKvoxTasks({ primary: { provider: COPILOT_ID, model, toolCalling: false, embeddings: false }, fallback });
+    const routes = routeKvoxTasks({ primary: { provider: COPILOT_ID, model, toolCalling: this.copilotToolCalling(model), embeddings: false }, fallback });
     return { copilot: model, routes };
   }
 
@@ -596,8 +614,8 @@ export class DesktopAi {
     const { routes } = await this.routing(settings);
     const routed = routes.taskModels[task as KvoxTaskId];
     if (routed) return routed.provider === COPILOT_ID ? 'copilot' : 'primary';
-    // Nobody can serve it (Ask with no OpenAI key): ask the OpenAI slot, whose refusal says why
-    // (key missing). It always has a model, so Copilot is not asked to do what it cannot.
+    // Nobody can serve it (Ask on a tool-less Copilot model with no OpenAI key): ask the OpenAI slot,
+    // whose refusal says why (key missing). It always has a model, so Copilot is not asked to do what it cannot.
     return activeModel(settings) !== null ? 'primary' : 'copilot';
   }
 
@@ -605,7 +623,8 @@ export class DesktopAi {
    * The tasks Copilot's missing capabilities leave without a provider (empty unless Copilot is the active provider).
    * The embedding tasks are never reported: semantic search needs an OpenAI key with or without
    * Copilot (search stays full text otherwise), so listing them would say nothing about Copilot.
-   * What is reported is what the user loses by choosing Copilot: Ask.
+   * What is reported is what the user loses by choosing Copilot: nothing, unless the chosen model is one
+   * the live listing marks as unable to call tools (then Ask, while no OpenAI key is stored).
    */
   async unavailableTasks(): Promise<KvoxTaskUnavailable[]> {
     const settings = await this.read();
