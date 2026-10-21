@@ -34,9 +34,12 @@ import { StorageObjectsController } from './storage-objects.controller.js';
 //                        peer of notes, needs it.
 //   SearchModule         full text (the AI binding offers no embeddings model)
 //   TranscriptsModule    no schedules, no transcode, no PDF exporter
-//   NotesModule          no schedules, no PDF/Word exporter; PDF, text and
-//                        Markdown documents are a source (`unpdf` reads a
-//                        PDF transcript, marinoscar/kvox#585)
+//   NotesModule          no schedules; Markdown, PDF and Word exports (the
+//                        packaged renderers, branded and offline: pdfkit
+//                        and docx, the fonts read from the package inside
+//                        app.asar); PDF, text and Markdown documents are a
+//                        source (`unpdf` reads a PDF transcript,
+//                        marinoscar/kvox#585)
 //   GraphModule          the connected-knowledge core (write, read, the brief,
 //                        the overview layout `kg.graph_layout` over the
 //                        graphology peers, `kg.migrate`, `kg.purge`,
@@ -89,7 +92,6 @@ export function createDesktopModule(options: DesktopModuleOptions): DynamicModul
   });
   const notes = NotesModule.forRoot({
     schedules: false,
-    exporters: { pdf: false, docx: false },
     peers: { transcripts, searchIndexing },
   });
   const search = SearchModule.forRoot();
