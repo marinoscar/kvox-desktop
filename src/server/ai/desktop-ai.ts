@@ -31,7 +31,9 @@ import {
   OPENAI_HOST,
   allowedHostsFor,
   copilotActive,
+  copilotConsentCurrent,
   needsKey,
+  nonCopilotSlot,
   type DesktopAiSettings,
   type SelectableAiProviderId,
 } from './desktop-ai-settings.js';
@@ -51,24 +53,28 @@ const COPILOT_ID = 'copilot';
 //   adapters     the OpenAI and OpenAI-compatible `AiProviderAdapter`s of the
 //                lean `@marinoscar/platform-ai-providers` (marinoscar/kvox#578),
 //                built with its plain factories: no Nest, no platform runtime;
-//                and, only while the user has switched Copilot on, the GitHub
-//                Copilot adapter of `@marinoscar/kvox-ai/copilot` (CopilotService).
+//                and, only while Copilot is the chosen provider (and consented),
+//                the GitHub Copilot adapter of `@marinoscar/kvox-ai/copilot`
+//                (CopilotService).
 //   keys         per call, from KVOX_SECRETS (purpose `ai`, named after the
 //                provider): the OS keychain through `safeStorage`. Nothing is
 //                cached; the runtime drops the key when the call settles.
-//   taskModels   the `desktopAi` settings: the active provider and its one
+//   taskModels   the `desktopAi` settings: the chosen provider and its one
 //                model, plus the slices' `ai` token ceilings.
 //
-// COPILOT IS AN ADD-ON (marinoscar/kvox-desktop#21). While it is on and consented,
-// `routeKvoxTasks` gives each task to Copilot when Copilot can serve it (notes,
-// titles, graph extraction, the name check) and else to the primary provider when
-// that is usable (Ask, embeddings), else lists it as unavailable. Two
-// `createKvoxAi` ports (one per provider) sit behind `createRoutedKvoxAi`.
+// THE PROVIDER IS ONE CHOICE OF THREE, NEVER OFF (OpenAI, an OpenAI-compatible
+// server, GitHub Copilot; marinoscar/kvox-desktop#21). While Copilot is chosen and
+// consented, `routeKvoxTasks` gives each task to Copilot when Copilot can serve it
+// (notes, titles, graph extraction, the name check) and else to the OPENAI slot
+// when an OpenAI key is stored (Ask, embeddings), else lists it as unavailable. Two
+// `createKvoxAi` ports (one per provider) sit behind `createRoutedKvoxAi`. With
+// OpenAI or the compatible server chosen, every task goes to it.
+// `copilot.enabled` is derived (`provider === 'copilot'`); `update` keeps it so.
 //
-// THE EGRESS RULE: every settings change re-derives the allowlist
-// (`allowedHostsFor`) and hands it to the server's egress guard, so only the
-// active provider's host (and, while Copilot is on, the Copilot hosts) is
-// reachable.
+// THE EGRESS RULE: every settings change, and every OpenAI key change while Copilot
+// is the provider, re-derives the allowlist (`allowedHostsFor`) and hands it to the
+// server's egress guard, so only the chosen provider's host is reachable (with
+// Copilot: the Copilot hosts, plus api.openai.com while an OpenAI key is stored).
 //
 // ⚠ A KEY NEVER LEAVES KVOX_SECRETS except into one call's `AiCallContext`: it
 // is not in a setting, a response, a log line or an error (`setKey` refuses a
@@ -198,7 +204,7 @@ export class DesktopAi {
       host: options.copilot ?? missingRuntimeHost(),
       log: options.log ?? (() => undefined),
       // The download hosts leave the egress allowlist when the download ends, however it ends.
-      onDownloadSettled: () => void this.read().then((settings) => this.options.onAllowedHosts(this.hostsFor(settings))),
+      onDownloadSettled: () => void this.read().then(async (settings) => this.options.onAllowedHosts(await this.hostsFor(settings))),
     });
     // `createDirectRuntime` reads this record on every call. The Copilot entry is a getter on the
     // service, so the adapter appears when it is built (also after a later runtime download)
@@ -228,9 +234,13 @@ export class DesktopAi {
     });
   }
 
-  /** The egress allowlist under these settings (and the npm registry host while the runtime downloads). */
-  private hostsFor(settings: DesktopAiSettings): string[] {
-    return allowedHostsFor(settings, { runtimeDownload: this.copilot.downloading });
+  /**
+   * The egress allowlist under these settings (and the npm registry host while the runtime downloads).
+   * With Copilot as the provider it asks whether an OpenAI key is stored: Ask goes there.
+   */
+  private async hostsFor(settings: DesktopAiSettings, runtimeDownload: boolean = this.copilot.downloading): Promise<string[]> {
+    const openaiKey = settings.provider === 'copilot' && (await this.keyStatus('openai')).configured;
+    return allowedHostsFor(settings, { runtimeDownload, openaiKey });
   }
 
   /** Brings Copilot up when the stored settings have it on (server start). */
@@ -250,7 +260,7 @@ export class DesktopAi {
 
   /** Reads the settings and hands their allowlist to the egress guard (start-up). */
   async applyEgress(): Promise<string[]> {
-    const hosts = this.hostsFor(await this.read());
+    const hosts = await this.hostsFor(await this.read());
     this.options.onAllowedHosts(hosts);
     return hosts;
   }
@@ -258,10 +268,11 @@ export class DesktopAi {
   /** Applies a JSON Merge Patch (validated by the namespace schema), then the new allowlist. */
   async update(patch: unknown, actorUserId: string): Promise<DesktopAiSettings> {
     if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) throw new BadRequestException('The AI settings patch must be an object');
-    await this.requireConsentFor(patch);
+    const normalised = await this.normalisePatch(patch);
+    await this.requireConsentFor(normalised);
     let saved: DesktopAiSettings;
     try {
-      saved = (await this.options.settings.patchSystem<DesktopAiSettings>(DESKTOP_AI_NAMESPACE, patch as Partial<DesktopAiSettings>, { actorUserId })).value;
+      saved = (await this.options.settings.patchSystem<DesktopAiSettings>(DESKTOP_AI_NAMESPACE, normalised as Partial<DesktopAiSettings>, { actorUserId })).value;
     } catch (error) {
       if (error instanceof Error && error.name === 'ZodError') {
         const issues = (error as Error & { issues?: Array<{ path: PropertyKey[]; message: string }> }).issues ?? [];
@@ -272,25 +283,62 @@ export class DesktopAi {
       }
       throw error;
     }
-    this.options.onAllowedHosts(this.hostsFor(saved));
+    this.options.onAllowedHosts(await this.hostsFor(saved));
     await this.applyCopilot(saved);
     return saved;
   }
 
-  /** Updates the Copilot add-on's settings (the consent gate applies), then brings it up or down. */
+  /**
+   * Updates the Copilot settings (the consent gate applies), then brings Copilot up or down. The
+   * card's `enabled` is the provider choice: `true` selects Copilot, `false` returns to OpenAI.
+   */
   async updateCopilot(patch: Partial<CopilotSettings>, actorUserId: string): Promise<DesktopAiSettings> {
     return this.update({ copilot: patch }, actorUserId);
   }
 
   /**
-   * Switching Copilot on needs the user's consent to the CURRENT text: refused before anything is
-   * written, so no route (this one, `PATCH /settings`) can turn it on without it.
+   * Keeps `provider` and `copilot.enabled` one fact, BEFORE the consent gate and the write:
+   *
+   *   - `copilot.enabled` sent without a `provider`: `true` chooses `copilot`; `false` returns to
+   *     `openai` when Copilot is the stored provider (and changes nothing else);
+   *   - whenever the patch sets the `provider` (or this turned `enabled` into one), `copilot.enabled`
+   *     is written as `provider === 'copilot'`, so a stale `enabled` in the same patch cannot win.
+   *
+   * An explicit `provider: null` (the old "Off") is refused: reading an old row migrates it, but
+   * writing "off" is no longer a thing.
+   */
+  private async normalisePatch(patch: object): Promise<object> {
+    const body = patch as { provider?: unknown; copilot?: unknown };
+    if (body.provider === null) {
+      throw new BadRequestException({ message: 'provider: choose OpenAI, an OpenAI-compatible server or GitHub Copilot', code: 'ai_settings_invalid' });
+    }
+    const copilot = body.copilot;
+    // A `copilot` that is not an object is left for the schema to refuse.
+    if (copilot !== undefined && (typeof copilot !== 'object' || copilot === null || Array.isArray(copilot))) return patch;
+    const enabled = (copilot as { enabled?: unknown } | undefined)?.enabled;
+    let provider = body.provider;
+    if (provider === undefined && typeof enabled === 'boolean') {
+      if (enabled) provider = 'copilot';
+      else if ((await this.read()).provider === 'copilot') provider = 'openai';
+    }
+    if (provider === undefined) return patch;
+    return { ...patch, provider, copilot: { ...(copilot ?? {}), enabled: provider === 'copilot' } };
+  }
+
+  /**
+   * Choosing Copilot needs the user's consent to the CURRENT text: refused before anything is
+   * written, so no route (this one, `PATCH /settings`) can choose it without it. The gate looks at
+   * the MERGED result of a write that touches the `provider` or the `copilot` settings.
    */
   private async requireConsentFor(patch: object): Promise<void> {
-    const copilot = (patch as { copilot?: unknown }).copilot;
-    if (typeof copilot !== 'object' || copilot === null || Array.isArray(copilot)) return;
-    const merged = { ...(await this.read()).copilot, ...(copilot as Partial<CopilotSettings>) };
-    if (merged.enabled === true && (!merged.consentedAt || merged.consentVersion !== COPILOT_CONSENT_VERSION)) {
+    const { provider: patched, copilot } = patch as { provider?: unknown; copilot?: unknown };
+    const touchesCopilot = typeof copilot === 'object' && copilot !== null && !Array.isArray(copilot);
+    if (patched === undefined && !touchesCopilot) return;
+    const current = await this.read();
+    const provider = patched === undefined ? current.provider : patched;
+    if (provider !== 'copilot') return;
+    const merged = { ...current.copilot, ...(touchesCopilot ? (copilot as Partial<CopilotSettings>) : {}) };
+    if (!copilotConsentCurrent(merged)) {
       throw new ConflictException({
         code: 'consent_required',
         message: 'Switching on GitHub Copilot needs your consent to the current terms first.',
@@ -299,7 +347,7 @@ export class DesktopAi {
     }
   }
 
-  /** Builds the Copilot adapter when Copilot is on and consented, and drops it otherwise. */
+  /** Builds the Copilot adapter when Copilot is the consented provider, and drops it otherwise. */
   private async applyCopilot(settings: DesktopAiSettings): Promise<void> {
     if (copilotActive(settings)) await this.copilot.activate();
     else await this.copilot.deactivate();
@@ -316,13 +364,22 @@ export class DesktopAi {
       throw new BadRequestException({ message: 'An API key is 8 to 4096 visible characters with no spaces.', code: 'ai_key_invalid' });
     }
     await this.options.secrets.set(AI_KEY_PURPOSE, id, apiKey, actorUserId, { label: `${id} API key` });
+    await this.reapplyEgressForKey(id);
     return this.keyStatus(id);
   }
 
   async deleteKey(provider: string, actorUserId: string): Promise<DesktopAiKeyStatus> {
     const id = this.requireSelectable(provider);
     await this.options.secrets.delete(AI_KEY_PURPOSE, id, actorUserId);
+    await this.reapplyEgressForKey(id);
     return this.keyStatus(id);
+  }
+
+  /** An OpenAI key added or removed while Copilot is the provider moves api.openai.com on or off the allowlist. */
+  private async reapplyEgressForKey(provider: SelectableAiProviderId): Promise<void> {
+    if (provider !== 'openai') return;
+    const settings = await this.read();
+    if (settings.provider === 'copilot') this.options.onAllowedHosts(await this.hostsFor(settings));
   }
 
   /**
@@ -357,10 +414,11 @@ export class DesktopAi {
     if (target === 'unconfigured') return failed('AI_PROVIDER_UNAVAILABLE', 'Enter the server base URL and save the AI settings first.');
     const refused = target === null ? null : this.options.checkEgress?.(target);
     if (refused) {
-      return failed(
-        'AI_PROVIDER_UNAVAILABLE',
-        `KVox blocked the connection to ${target}: only the AI provider chosen in Settings can be reached. Select this provider and save, then test again.`,
-      );
+      const advice =
+        settings.provider === 'copilot' && id === 'openai'
+          ? 'while GitHub Copilot is your AI provider, OpenAI can be reached only once its key is saved (Ask uses it). Save the key, then test again.'
+          : 'only the AI provider chosen in Settings can be reached. Select this provider and save, then test again.';
+      return failed('AI_PROVIDER_UNAVAILABLE', `KVox blocked the connection to ${target}: ${advice}`);
     }
 
     const secret = typed ?? (await this.keyFor(id))?.apiKey;
@@ -448,12 +506,15 @@ export class DesktopAi {
     };
   }
 
-  /** The primary provider's task-model state: the active provider and its one model. */
+  /**
+   * The primary (non-Copilot) provider's task-model state: the slot that serves the tasks Copilot
+   * cannot (the chosen slot, or OpenAI while Copilot is chosen) and its one model.
+   */
   private async modelState(): Promise<KvoxAiModelState> {
     const settings = await this.read();
     const limits = (await this.options.settings.readSystem<SliceAiSettings>('ai')).value;
     const model = activeModel(settings);
-    const provider = model === null ? null : settings.provider;
+    const provider = model === null ? null : nonCopilotSlot(settings);
     const slot = DESKTOP_AI_PROVIDERS.find((candidate) => candidate.id === provider);
     return {
       policy: {
@@ -509,24 +570,24 @@ export class DesktopAi {
     };
   }
 
-  /** The primary provider as a routing choice, or `null` when it cannot serve a call now (off, no model, no key). */
-  private async primaryChoice(settings: DesktopAiSettings): Promise<ProviderChoice | null> {
-    const provider = settings.provider;
+  /** The slot that serves what Copilot cannot, as a routing choice, or `null` when it cannot serve a call now (no model, no key). */
+  private async fallbackChoice(settings: DesktopAiSettings): Promise<ProviderChoice | null> {
+    const provider = nonCopilotSlot(settings);
     const model = activeModel(settings);
-    if (provider === null || model === null) return null;
+    if (model === null) return null;
     if (needsKey(provider, settings) && !(await this.keyStatus(provider)).configured) return null;
     return { provider, model, toolCalling: true, embeddings: true };
   }
 
-  /** Which tasks go where while Copilot is on: Copilot first, the primary provider for the rest. */
+  /** Which tasks go where while Copilot is the provider: Copilot first, the OpenAI slot (when its key is stored) for the rest. */
   private async routing(settings: DesktopAiSettings): Promise<{ copilot: string; routes: ReturnType<typeof routeKvoxTasks> }> {
     const model = (await this.copilot.pickModel(settings.copilot.model)) ?? settings.copilot.model ?? '';
-    const fallback = await this.primaryChoice(settings);
+    const fallback = await this.fallbackChoice(settings);
     const routes = routeKvoxTasks({ primary: { provider: COPILOT_ID, model, toolCalling: false, embeddings: false }, fallback });
     return { copilot: model, routes };
   }
 
-  /** Which provider serves a task now. With Copilot off, always the primary provider. */
+  /** Which provider serves a task now. Unless Copilot is the active provider, always the primary one. */
   private async serving(task: string): Promise<RoutedProvider> {
     const settings = await this.read();
     if (!copilotActive(settings)) return 'primary';
@@ -535,16 +596,16 @@ export class DesktopAi {
     const { routes } = await this.routing(settings);
     const routed = routes.taskModels[task as KvoxTaskId];
     if (routed) return routed.provider === COPILOT_ID ? 'copilot' : 'primary';
-    // Nobody can serve it: ask the primary provider when it is set up (its refusal says why),
-    // else Copilot (whose models say they cannot call tools).
-    return settings.provider !== null && activeModel(settings) !== null ? 'primary' : 'copilot';
+    // Nobody can serve it (Ask with no OpenAI key): ask the OpenAI slot, whose refusal says why
+    // (key missing). It always has a model, so Copilot is not asked to do what it cannot.
+    return activeModel(settings) !== null ? 'primary' : 'copilot';
   }
 
   /**
-   * The tasks Copilot's missing capabilities leave without a provider (empty while Copilot is off).
+   * The tasks Copilot's missing capabilities leave without a provider (empty unless Copilot is the active provider).
    * The embedding tasks are never reported: semantic search needs an OpenAI key with or without
    * Copilot (search stays full text otherwise), so listing them would say nothing about Copilot.
-   * What is reported is what the user loses by switching Copilot on: Ask.
+   * What is reported is what the user loses by choosing Copilot: Ask.
    */
   async unavailableTasks(): Promise<KvoxTaskUnavailable[]> {
     const settings = await this.read();
@@ -565,7 +626,7 @@ export class DesktopAi {
   }
 
   private async requireCopilotActive(): Promise<void> {
-    if (!copilotActive(await this.read())) throw new CopilotConflictError('copilot_disabled', 'GitHub Copilot is off. Switch it on first.');
+    if (!copilotActive(await this.read())) throw new CopilotConflictError('copilot_disabled', 'GitHub Copilot is not your AI provider. Choose it first.');
   }
 
   async copilotSignInStart(): Promise<CopilotSignInChallenge> {
@@ -588,11 +649,11 @@ export class DesktopAi {
   async copilotStartDownload(): Promise<CopilotStatus> {
     await this.requireCopilotActive();
     // The registry host is allowed BEFORE the first byte is asked for, and dropped when it ends.
-    this.options.onAllowedHosts(allowedHostsFor(await this.read(), { runtimeDownload: true }));
+    this.options.onAllowedHosts(await this.hostsFor(await this.read(), true));
     try {
       this.copilot.startDownload();
     } catch (error) {
-      this.options.onAllowedHosts(this.hostsFor(await this.read()));
+      this.options.onAllowedHosts(await this.hostsFor(await this.read()));
       throw error;
     }
     return this.copilotStatus();
@@ -600,7 +661,7 @@ export class DesktopAi {
 
   /** "Remove Copilot data" (only with Copilot off): the private directory, and the downloaded runtime if asked. */
   async copilotRemoveData(includeRuntime: boolean): Promise<{ removed: string[]; keptRuntime: boolean }> {
-    if (copilotActive(await this.read())) throw new CopilotConflictError('copilot_enabled', 'Switch GitHub Copilot off before removing its data.');
+    if (copilotActive(await this.read())) throw new CopilotConflictError('copilot_enabled', 'Choose another AI provider before removing GitHub Copilot data.');
     return this.copilot.removeData({ includeRuntime });
   }
 

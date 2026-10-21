@@ -6,7 +6,7 @@ Single-user, offline-first desktop application for meeting notes and a personal 
 
 - Inputs: PDF transcripts, KVox transcript export JSON, Markdown or text, and KVox note exports. There is no transcription ([ADR-0006](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0006-desktop-inputs-no-transcription.md)).
 - Outputs: AI notes, a connected-knowledge graph, search, and Ask.
-- AI: OpenAI or an OpenAI-compatible base URL. GitHub Copilot is an opt-in add-on ([ADR-0005](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0005-ai-architecture-shared-harness.md)).
+- AI: one provider, your choice of three, never off: OpenAI, an OpenAI-compatible base URL, or GitHub Copilot ([ADR-0005](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0005-ai-architecture-shared-harness.md)).
 - Data stays on the device. The AI provider is the only cloud egress ([ADR-0004](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0004-desktop-data-local-only.md)).
 
 ## Core principle
@@ -86,7 +86,7 @@ Everything KVox keeps lives there, and nowhere else ([ADR-0004](https://github.c
 | `secrets.bin` | Saved API keys, each an Electron `safeStorage` blob (OS keychain, DPAPI or Secret Service) |
 | `settings.json` | The shell's own preferences: the plaintext-keys consent below, and "Check for updates" (off unless you turn it on) |
 | `tmp/` | Scratch files and upload parts; emptied at every start |
-| `copilot/` | Only if you turn on GitHub Copilot: its private state (`home/`: sessions and sign-in material, `work/`: an empty working directory) and the downloaded runtime (`runtime/<version>/`). Never in a backup (see [Network and privacy: GitHub Copilot](#network-and-privacy-github-copilot)) |
+| `copilot/` | Only if you choose GitHub Copilot: its private state (`home/`: sessions and sign-in material, `work/`: an empty working directory) and the downloaded runtime (`runtime/<version>/`). Never in a backup (see [Network and privacy: GitHub Copilot](#network-and-privacy-github-copilot)) |
 
 Saved keys never rest in the clear. On Linux without a keyring, Electron falls back to its `basic_text` backend; KVox then refuses to save a key (HTTP 409, `secret_storage_plaintext`) and Settings > Data and privacy shows a warning. Keys are saved only after you set up a keyring or explicitly accept plaintext storage there.
 
@@ -98,15 +98,15 @@ What leaves the device:
 No telemetry, no crash upload, no remote fonts. Both processes enforce it:
 
 - **Window**: the page's CSP allows only loopback (`connect-src http://127.0.0.1:*`), and the session cancels any request that is not loopback, `kvox:`, `file:`, `data:`, `blob:` or `devtools:`.
-- **Server**: a global undici dispatcher (for `fetch`) and a guard on every outgoing socket (`http`, `https`, `tls`, `net`) allow loopback and the configured AI provider's host only: `api.openai.com` for OpenAI, the base URL's host for an OpenAI-compatible server (none at all for one on this device). Saving the AI settings replaces the allowlist at once.
+- **Server**: a global undici dispatcher (for `fetch`) and a guard on every outgoing socket (`http`, `https`, `tls`, `net`) allow loopback and the chosen AI provider's host only: `api.openai.com` for OpenAI, the base URL's host for an OpenAI-compatible server (none at all for one on this device), the Copilot hosts for GitHub Copilot, plus `api.openai.com` there only while an OpenAI key is saved (for Ask and the embeddings). Saving the AI settings replaces the allowlist at once.
 
 Every blocked request is an error line in the log with the host only (`window: egress blocked: example.com`, `server: egress blocked: example.com`), plus a running count. The loopback server requires a per-launch token. For fully offline use, point the OpenAI-compatible base URL at a local model server (Ollama, LM Studio).
 
 ### Network and privacy: GitHub Copilot
 
-GitHub Copilot is opt-in and off by default. While it is off there is no runtime process, no proxy listener and no Copilot traffic, and nothing is downloaded. What turning it on adds (marinoscar/kvox-desktop#23):
+GitHub Copilot is one of the three AI providers, and OpenAI is the default. Until you choose Copilot and agree to the consent there is no runtime process, no proxy listener and no Copilot traffic, and nothing is downloaded. The same holds when you choose another provider again. What choosing it adds (marinoscar/kvox-desktop#23):
 
-- **A download, once.** The Copilot SDK drives a separate runtime of 130 to 175 MB per platform. The installer does not contain it: the first opt-in downloads it from the npm registry only (`registry.npmjs.org`, https, the default port, every redirect hop checked and none needed today), refuses it unless its SHA-256 matches the pin in this repository, and keeps it in `copilot/runtime/<version>`. The host is reachable for the download only and is dropped again when it ends. An optional installer flavour bundles the runtime instead (see [The Copilot runtime](#the-copilot-runtime)).
+- **A download, once.** The Copilot SDK drives a separate runtime of 130 to 175 MB per platform. The installer does not contain it: the first time you choose Copilot it downloads it from the npm registry only (`registry.npmjs.org`, https, the default port, every redirect hop checked and none needed today), refuses it unless its SHA-256 matches the pin in this repository, and keeps it in `copilot/runtime/<version>`. The host is reachable for the download only and is dropped again when it ends. An optional installer flavour bundles the runtime instead (see [The Copilot runtime](#the-copilot-runtime)).
 - **A child process that cannot reach the internet by itself.** The runtime is a separate process, so the guard above cannot see its sockets. It is started with `HTTPS_PROXY` and `HTTP_PROXY` pointing at a proxy that KVox runs on `127.0.0.1` (a random port, protected by random credentials so no other program can use it) and an empty `NO_PROXY`. The proxy opens HTTPS tunnels to these hosts and refuses everything else (plain HTTP, other ports, IP addresses, sub-domains), logging each refusal with the host only. The server's own guard applies a second time to the tunnel:
 
   | Host | For |
@@ -115,11 +115,11 @@ GitHub Copilot is opt-in and off by default. While it is off there is no runtime
   | `github.com` | Sign-in |
   | `api.github.com` | Account and entitlement calls, the Copilot token exchange |
 
-  The list is `COPILOT_EGRESS_HOSTS` of `@marinoscar/kvox-ai/copilot`. It was read from the runtime, not captured on the wire, so a refusal in the log (`copilot egress refused: CONNECT to <host>:443`) is how a missing host would show. The runtime does honour `HTTPS_PROXY` (checked against SDK 1.0.22, runtime 1.0.98: it sent `CONNECT api.github.com:443` with the proxy's credentials to a listener given as `HTTPS_PROXY`).
+  The list is `COPILOT_EGRESS_HOSTS` of `@marinoscar/kvox-ai/copilot`. Ask and the embeddings go to OpenAI, not through this proxy: the server's own guard allows `api.openai.com` for them only while an OpenAI key is saved. It was read from the runtime, not captured on the wire, so a refusal in the log (`copilot egress refused: CONNECT to <host>:443`) is how a missing host would show. The runtime does honour `HTTPS_PROXY` (checked against SDK 1.0.22, runtime 1.0.98: it sent `CONNECT api.github.com:443` with the proxy's credentials to a listener given as `HTTPS_PROXY`).
 - **Telemetry, honestly.** KVox never turns the SDK's OpenTelemetry on and sets the conventional off switches in the runtime's environment (`COPILOT_OTEL_ENABLED=false`, `OTEL_SDK_DISABLED=true`, `DO_NOT_TRACK=1`) and removes any OTLP endpoint and the tokens in `GH_TOKEN`, `GITHUB_TOKEN` and `COPILOT_GITHUB_TOKEN` from its environment. The runtime itself contains a GitHub product-telemetry service with **no documented off switch**, so KVox cannot promise that GitHub receives no usage data from a signed-in runtime. What it guarantees is where that traffic can go: only the three hosts above, because the proxy refuses the rest. Do not read "no telemetry" as covering Copilot.
 - **Sign-in scopes.** The runtime runs the sign-in itself; no token reaches KVox. Its authorization asks for broad GitHub scopes (`read:user read:org repo gist ...`) and the consent screen lists them.
 - **Stored where.** Everything the runtime keeps is in `copilot/`, which is excluded from **Export data** and never touched by **Restore**: a backup never carries sign-in material, and a restored profile signs in again. Runtime output is never written to the log unredacted (the log level is `none`, and every line the sandbox writes goes through the package's token redaction).
-- **Turning it off.** The runtime is stopped, the proxy closed and the environment put back; quitting the app does the same, and a runtime that does not stop is killed. "Remove Copilot data" deletes `copilot/` except the downloaded runtime, or including it if you choose.
+- **Choosing another provider.** The runtime is stopped, the proxy closed and the environment put back (the Copilot hosts leave the allowlist); quitting the app does the same, and a runtime that does not stop is killed. "Remove Copilot data" (available while Copilot is not the provider) deletes `copilot/` except the downloaded runtime, or including it if you choose.
 
 ### Export data and Restore
 
@@ -167,7 +167,7 @@ How facts get in:
 3. You review the proposal. Nothing enters the graph until you send it.
 4. Anything a meeting never said, you can set by hand on the person's page. Each manual edit is stored with its own evidence ("Set by hand"), and Ask cites it that way.
 
-Ask answers from the graph through the packages' tools (`search`, `list_commitments`, `neighbors`, `timeline`, …). It never writes SQL. It needs a model with tool calling: OpenAI or an OpenAI-compatible server. GitHub Copilot has no tool calling, so with Copilot on Ask runs on the OpenAI provider when its key is saved and is hidden, with the reason, otherwise. The reference questions, answered by the e2e test (`tests/e2e/graph-ask.spec.ts`) on synthetic meetings:
+Ask answers from the graph through the packages' tools (`search`, `list_commitments`, `neighbors`, `timeline`, …). It never writes SQL. It needs a model with tool calling: OpenAI or an OpenAI-compatible server. GitHub Copilot has no tool calling, so with Copilot as the provider Ask runs on OpenAI when an OpenAI key is saved and is unavailable, with the reason, otherwise. The reference questions, answered by the e2e test (`tests/e2e/graph-ask.spec.ts`) on synthetic meetings:
 
 | Question | How it is answered |
 |---|---|
@@ -187,7 +187,7 @@ Host duties Desktop carries for the graph:
 
 | Card | Route | Page |
 |---|---|---|
-| AI provider | `/settings/ai` | The provider, model and server URL, then the platform's key card ([AI providers](#ai-providers)) |
+| AI provider | `/settings/ai` | Choose one of three providers, then set up the one chosen ([AI providers](#ai-providers)) |
 | Connected knowledge | `/settings/knowledge` | The `ai.graphEnabled` switch |
 | Note Templates | `/settings/note-templates` | The notes slice's templates page (a card of the hub, not a rail row, as on web) |
 | Data and privacy | `/settings/data` | The data folder, Export data and Restore, how saved keys are protected |
@@ -206,39 +206,47 @@ KVox Desktop looks like KVox web because it uses the same code for it, and defin
 
 ## AI providers
 
-Settings > AI provider. `KVOX_AI` is the packages' own `createKvoxAi` over `createDirectRuntime` (`@marinoscar/kvox-ai`), with the OpenAI adapters of the lean `@marinoscar/platform-ai-providers` (marinoscar/kvox#578) and the key read from `KVOX_SECRETS` on every call (`src/server/ai/`).
+Settings > AI provider. KVox always has an AI provider: there is no "Off". The provider is one choice of three (OpenAI, an OpenAI-compatible server, GitHub Copilot), and OpenAI is the default. `KVOX_AI` is the packages' own `createKvoxAi` over `createDirectRuntime` (`@marinoscar/kvox-ai`), with the OpenAI adapters of the lean `@marinoscar/platform-ai-providers` (marinoscar/kvox#578) and the key read from `KVOX_SECRETS` on every call (`src/server/ai/`).
+
+The page has three parts:
+
+1. **Choose your AI provider.** Three options, each with a chip: **Ready** or **Needs setup**. Choosing one applies at once (`PATCH /api/desktop/ai/settings`).
+2. **Set up <provider>.** Only the chosen provider's setup: OpenAI's key and model; the server's URL, model, wire style and key; or Copilot's card, with an optional OpenAI key for Ask.
+3. **One hosts line.** "Besides this device, KVox may connect only to: ..." lists the hosts the egress guard allows now.
+
+Switching provider never deletes another provider's key or settings.
 
 | Provider | Setup | Status |
 |---|---|---|
 | OpenAI | Pick the model, paste the API key and **Save & verify**; it is stored in the OS keychain. **Test** and **Re-check** ask OpenAI whether the key works; **Remove** forgets it | Available |
 | OpenAI-compatible | Set the base URL, model and wire style (Chat Completions or Responses), and a key (same card) unless the server takes none (then the page says "No key needed") | Available |
-| GitHub Copilot | Off by default. An add-on beside the provider above, not a replacement: Settings > AI provider > GitHub Copilot shows what is sent to GitHub and asks for your consent, then you sign in with GitHub. Your own Copilot subscription pays | Available, opt-in. Notes, titles, knowledge extraction and the name check run on Copilot; Ask needs OpenAI (marinoscar/kvox#581) |
+| GitHub Copilot | Choosing it shows what is sent to GitHub and asks for your consent once (**Agree** selects Copilot, **Not now** goes back), then you sign in with GitHub. Your own Copilot subscription pays. Optional: an OpenAI key, for Ask | Available. Notes, titles, knowledge extraction and the name check run on Copilot; Ask and the embeddings use OpenAI when an OpenAI key is saved, else they are unavailable (marinoscar/kvox#581) |
 
-GitHub Copilot (marinoscar/kvox-desktop#21) is loaded only while it is switched on. The consent is versioned (`COPILOT_CONSENT_VERSION`): a new text asks again, and a stored setting from before the adapter existed reads as off. While it is on, `routeKvoxTasks` gives each task to Copilot when Copilot can serve it and else to the primary provider when it is usable; what no provider can serve (Ask without an OpenAI key) is reported as `unavailableTasks`. The server may then also reach `COPILOT_EGRESS_HOSTS` (`api.githubcopilot.com`, `github.com`, `api.github.com`), and only while it is on. No GitHub token is ever held by KVox: the Copilot runtime keeps the sign-in, and KVox sees "signed in as <login>". Endpoints (all behind the launch token, in `src/server/desktop-ai.controller.ts`):
+GitHub Copilot (marinoscar/kvox-desktop#21) is loaded only while it is the chosen provider. The consent is versioned (`COPILOT_CONSENT_VERSION`): a new text asks again, and until you agree to it Copilot is not active. When Copilot is the provider, `routeKvoxTasks` gives each task to Copilot when Copilot can serve it and else to the OpenAI slot when an OpenAI key is saved; what neither can serve (Ask without an OpenAI key) is reported as `unavailableTasks`. The server may then also reach `COPILOT_EGRESS_HOSTS` (`api.githubcopilot.com`, `github.com`, `api.github.com`), and only while Copilot is the provider; `api.openai.com` is on the allowlist only while an OpenAI key is saved. Settings saved by an earlier version migrate when they are read: an old "Off" becomes OpenAI, and a Copilot add-on that was switched on with the current consent becomes the Copilot provider. No GitHub token is ever held by KVox: the Copilot runtime keeps the sign-in, and KVox sees "signed in as <login>". Endpoints (all behind the launch token, in `src/server/desktop-ai.controller.ts`):
 
 | Endpoint | Does |
 |---|---|
 | `GET /api/desktop/ai/copilot/status` | `CopilotStatus` (enabled, signedIn, login, runtime state and progress, models, unavailableTasks) plus `allowedHosts` |
-| `PATCH /api/desktop/ai/copilot` | `Partial<CopilotSettings>`; switching on without the current consent is 409 `consent_required` |
+| `PATCH /api/desktop/ai/copilot` | `Partial<CopilotSettings>`; `enabled: true` (agree) selects Copilot as the provider and `enabled: false` (withdraw) deselects it, back to OpenAI; choosing Copilot without the current consent is 409 `consent_required` |
 | `POST /api/desktop/ai/copilot/sign-in` | A `CopilotSignInChallenge` (open the address, or type the code) |
 | `POST /api/desktop/ai/copilot/sign-in/wait` | Long poll: answers the status once signed in; hanging up cancels the sign-in |
 | `POST /api/desktop/ai/copilot/sign-out` | Signs the runtime's account out |
-| `POST` / `DELETE /api/desktop/ai/copilot/runtime/download` | Starts (202) or cancels the opt-in runtime download; progress is in the status |
+| `POST` / `DELETE /api/desktop/ai/copilot/runtime/download` | Starts (202) or cancels the runtime download; progress is in the status |
 
 The key block is the platform's `UserAiKeyCard` (`KeylessProviderCard` for a keyless server), the card KVox web shows. **Save & verify** and **Test** run on the local server, never in the window: `POST /api/desktop/ai/keys/:provider/test` calls the adapter's `verifyKey` (and `listModels` for the count) with the typed key, or the stored one when none is typed, and answers a verdict in the platform's `AiProbeResult` shape (HTTP 200; `success` is the answer). The key goes to the provider and nowhere else: not into the answer, an error or a log line. A key the provider rejects is not stored; a host the egress guard refuses (a provider other than the one saved in Settings) is a readable failed check, not a socket error.
 
-The non-secret choices are the system settings namespace `desktopAi` (in the database, so they travel in a backup); keys are `KVOX_SECRETS` purpose `ai`, named after the provider, and never appear in a setting, a response, a log line or an error. Semantic search embeds with OpenAI's `text-embedding-3-small` (the packages' embedding catalog), so it needs an OpenAI key and the OpenAI provider; otherwise search stays full-text.
+The non-secret choices are the system settings namespace `desktopAi` (in the database, so they travel in a backup); keys are `KVOX_SECRETS` purpose `ai`, named after the provider, and never appear in a setting, a response, a log line or an error. Semantic search embeds with OpenAI's `text-embedding-3-small` (the packages' embedding catalog), so it needs an OpenAI key (the OpenAI provider, or the optional key under Copilot); otherwise search stays full-text.
 
-### Turning on GitHub Copilot
+### Choosing GitHub Copilot
 
-Settings > AI provider shows the Copilot card below the provider form (the packaged `CopilotProviderCard` of `@marinoscar/kvox-web/copilot/ui`, the same card on every host; the wording is the package's). Desktop only binds it: `src/renderer/src/settings/copilotPort.ts` maps the card's six routes to `/api/desktop/ai/copilot/*`, `CopilotSection.tsx` renders it, and the renderer never sees a token.
+Choosing GitHub Copilot in Settings > AI provider shows the Copilot card under "Set up GitHub Copilot" (the packaged `CopilotProviderCard` of `@marinoscar/kvox-web/copilot/ui`, the same card on every host; the wording is the package's). Desktop only binds it: `src/renderer/src/settings/copilotPort.ts` maps the card's six routes to `/api/desktop/ai/copilot/*`, `CopilotSection.tsx` renders it, and the renderer never sees a token.
 
-1. **Switch it on.** It is off by default. The switch opens the consent: what is sent to GitHub, GitHub's terms and the Copilot data page. **Not now** leaves it off; **Agree and turn on** stores the consent (`consentedAt`, `consentVersion`). A new consent text asks again.
+1. **Choose it.** There is no on/off switch: Copilot is one of the three options. Choosing it without a consent to the current text opens the consent once: what is sent to GitHub, GitHub's terms and the Copilot data page. **Not now** goes back to the previous provider and saves nothing; **Agree** stores the consent (`consentedAt`, `consentVersion`) and selects Copilot (`PATCH /api/desktop/ai/copilot`). A new consent text asks again.
 2. **Download the runtime**, once, if the installer did not bundle it. The card states the size, shows progress and has Cancel.
 3. **Sign in.** The card shows the device code (with a copy button) and opens github.com in your browser; after you authorize, it shows "Signed in as <login>" without a reload. The link is opened by the main process (`window.kvoxDesktop.openExternal`), which allows only `https://github.com/...` and refuses every other address.
 4. **Pick a model.** The card lists the models Copilot reports; the choice is stored.
 
-What runs where: notes, titles, knowledge extraction and the name check run on Copilot; Ask needs a model with tool calling, so with Copilot on and no OpenAI key the Ask entry in the top bar is disabled, with a tooltip that says to add an OpenAI key (the server reports it as `unavailableTasks` on `GET /api/desktop/ai`). With an OpenAI key saved, Ask runs on OpenAI. While Copilot is on, the page's footer ("Besides this device, KVox may connect only to ...") lists the Copilot hosts; switching it off removes them, and **Sign out** signs the runtime out.
+What runs where: Copilot runs every task it can: notes, titles, knowledge extraction and the name check. Ask needs a model with tool calling, and the embeddings need OpenAI, so under Copilot they use OpenAI when an OpenAI key is saved. The card has an optional "an OpenAI key for Ask" block for that key. Without one, Ask is unavailable: the Ask entry in the top bar is disabled, with a tooltip that says to add an OpenAI key (the server reports it as `unavailableTasks` on `GET /api/desktop/ai`). While Copilot is the provider, the page's hosts line ("Besides this device, KVox may connect only to ...") lists the Copilot hosts, and `api.openai.com` only while an OpenAI key is saved; choosing another provider removes the Copilot hosts, and **Sign out** signs the runtime out.
 
 The end-to-end test `tests/e2e/copilot.spec.ts` walks this with the packages' mock transport (`KVOX_E2E_COPILOT_MOCK=1`, an unpackaged build only).
 
@@ -388,7 +396,7 @@ Turning it off stops the timer and closes the session again. No user data is sen
 
 ### The Copilot runtime
 
-The GitHub Copilot runtime (130 to 175 MB per platform) is **not** in the default installer: it is downloaded on the first opt-in (see [Network and privacy: GitHub Copilot](#network-and-privacy-github-copilot)). `electron-builder.yml` excludes the SDK's per-platform runtime packages (`!node_modules/@github/copilot-sdk-*/**`; the SDK's own JavaScript stays, it is small). `node scripts/packaged-app.mjs verify` fails the build if the runtime is beside the archive or inside `app.asar`, or if any file outside the archive is over 100 MB; `tests/unit/packaging.test.ts` pins the same rules.
+The GitHub Copilot runtime (130 to 175 MB per platform) is **not** in the default installer: it is downloaded the first time you choose Copilot (see [Network and privacy: GitHub Copilot](#network-and-privacy-github-copilot)). `electron-builder.yml` excludes the SDK's per-platform runtime packages (`!node_modules/@github/copilot-sdk-*/**`; the SDK's own JavaScript stays, it is small). `node scripts/packaged-app.mjs verify` fails the build if the runtime is beside the archive or inside `app.asar`, or if any file outside the archive is over 100 MB; `tests/unit/packaging.test.ts` pins the same rules.
 
 #### Where the downloaded runtime comes from
 

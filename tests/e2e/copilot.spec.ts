@@ -12,7 +12,7 @@ import {
   COPILOT_DOWNLOAD_BUTTON,
   COPILOT_SIGN_IN_BUTTON,
   COPILOT_SIGN_IN_DIALOG,
-  COPILOT_SWITCH,
+  COPILOT_RADIO,
 } from '../support/copilot-ui';
 
 // =============================================================================
@@ -26,7 +26,8 @@ import {
 // the runtime download (progress, Cancel), the sign-in device code, "Signed in
 // as", Ask's disabled entry, a note generated on Copilot, sign-out, switching off.
 // No OpenAI key is saved, so every task runs on Copilot; no request may leave
-// the loopback.
+// the loopback. Copilot is chosen with the page's "AI provider" radio group: the
+// consent first (Not now keeps OpenAI), then it is the provider until OpenAI is chosen again.
 //
 // It needs a display (CI has one; locally: xvfb-run) and the built app (`out/`).
 // Against an installed app (KVOX_E2E_EXECUTABLE) it is skipped: the mock is for
@@ -76,25 +77,41 @@ test('Copilot: consent, runtime download, sign-in, a note on Copilot, sign-out',
     };
   });
 
-  // ---- Off by default; Cancel on the consent leaves it off --------------------
+  // ---- OpenAI by default; Not now on the consent keeps it ------------------------
   await openSettingsCard(page, 'AI provider');
+  const providers = page.getByRole('radiogroup', { name: 'AI provider' });
+  const copilotRadio = providers.getByRole('radio', { name: COPILOT_RADIO });
+  const openaiRadio = providers.getByRole('radio', { name: 'OpenAI', exact: true });
   const card = page.getByRole('region', { name: 'GitHub Copilot sign-in' });
-  const toggle = page.getByLabel(COPILOT_SWITCH);
-  await expect(toggle).not.toBeChecked();
-  await expect(card.getByRole('button', { name: COPILOT_SIGN_IN_BUTTON })).toHaveCount(0);
-  await toggle.click();
+  await expect(openaiRadio).toBeChecked();
+  await expect(copilotRadio).not.toBeChecked();
+  // Only the chosen provider's setup: no Copilot card while OpenAI is chosen.
+  await expect(card).toHaveCount(0);
+  await copilotRadio.click();
   const consent = page.getByRole('dialog', { name: COPILOT_CONSENT_TITLE });
   await expect(consent).toBeVisible();
   await consent.getByRole('button', { name: 'Not now' }).click();
   await expect(consent).toBeHidden();
-  await expect(toggle).not.toBeChecked();
+  await expect(copilotRadio).not.toBeChecked();
+  await expect(openaiRadio).toBeChecked();
+  await expect(card).toHaveCount(0);
 
-  // ---- Accept: the setting is stored with the consent -------------------------
-  await toggle.click();
+  // ---- Agree: Copilot becomes the provider ------------------------------------------
+  await copilotRadio.click();
   await page.getByRole('dialog', { name: COPILOT_CONSENT_TITLE }).getByRole('button', { name: COPILOT_ACCEPT_LABEL }).click();
-  await expect(toggle).toBeChecked();
-  // The Copilot hosts appear in the footer while it is on.
-  await expect(page.getByText(/Besides this device, KVox may connect only to .*api\.githubcopilot\.com/)).toBeVisible();
+  await expect(copilotRadio).toBeChecked();
+  await expect(page.getByRole('status').filter({ hasText: 'Using GitHub Copilot.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Set up GitHub Copilot' })).toBeVisible();
+  await expect(card).toBeVisible();
+  // The page offers the choice: the card has no switch of its own.
+  await expect(page.getByLabel('Enable GitHub Copilot')).toHaveCount(0);
+  // Signed out with no runtime yet: chosen, but not ready.
+  await expect(providers.getByText('Needs setup')).toBeVisible();
+  // The optional OpenAI key for Ask, under Copilot's own setup.
+  await expect(page.getByRole('heading', { name: 'Optional: an OpenAI key for Ask' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'OpenAI key', exact: true })).toBeVisible();
+  // The Copilot hosts appear in the one footer while it is the provider.
+  await expect(page.getByText(/Besides this device, KVox may connect only to: .*api\.githubcopilot\.com/)).toHaveCount(1);
 
   // ---- The runtime is missing: size, Download, progress, Cancel ---------------
   await expect(card.getByText(/The Copilot runtime is not installed/)).toBeVisible();
@@ -121,6 +138,7 @@ test('Copilot: consent, runtime download, sign-in, a note on Copilot, sign-out',
   await expect(card.getByText('Signed in as octocat')).toBeVisible();
   await expect(signIn).toBeHidden();
   await expect(card.getByRole('combobox', { name: 'Model' })).toBeVisible();
+  await expect(providers.getByText('Ready')).toBeVisible();
   const capabilities = card.getByRole('list', { name: 'GitHub Copilot capabilities' });
   await expect(capabilities.getByRole('listitem').filter({ hasText: 'Notes' }).getByText('Available')).toBeVisible();
   await expect(capabilities.getByRole('listitem').filter({ hasText: 'Ask' }).getByText('Not available')).toBeVisible();
@@ -148,17 +166,21 @@ test('Copilot: consent, runtime download, sign-in, a note on Copilot, sign-out',
   await page.waitForURL(/#\/notes\/[0-9a-f-]{36}$/);
   await expect(page.getByText('Generated on Copilot: copilotzebra.')).toBeVisible();
 
-  // ---- Sign out; then off removes the hosts ---------------------------------------
+  // ---- Still the provider after a visit elsewhere; sign out; then OpenAI removes the hosts ----
   await openSettingsCard(page, 'AI provider');
+  await expect(copilotRadio).toBeChecked();
   await card.getByRole('button', { name: 'Sign out' }).click();
   await expect(card.getByRole('button', { name: COPILOT_SIGN_IN_BUTTON })).toBeVisible();
   await expect(card.getByText(/Signed in as/)).toHaveCount(0);
-  await toggle.click();
-  await expect(toggle).not.toBeChecked();
-  // Back to the one host of the saved provider (OpenAI is the default); the Copilot hosts are gone.
+  await expect(providers.getByText('Needs setup')).toBeVisible();
+  await openaiRadio.click();
+  await expect(openaiRadio).toBeChecked();
+  await expect(page.getByRole('status').filter({ hasText: 'Using OpenAI.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Set up OpenAI', exact: true })).toBeVisible();
+  // Back to the one host of OpenAI; the Copilot hosts and the Copilot card are gone.
   await expect(page.getByText('KVox may connect only to: api.openai.com')).toBeVisible();
   await expect(page.getByText(/api\.githubcopilot\.com/)).toHaveCount(0);
-  await expect(card.getByRole('button', { name: COPILOT_SIGN_IN_BUTTON })).toHaveCount(0);
+  await expect(card).toHaveCount(0);
 
   // ---- Nothing left the device ------------------------------------------------------
   const outside = requests.filter((url) => {

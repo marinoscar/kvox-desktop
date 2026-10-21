@@ -34,14 +34,18 @@ import type { EgressGuard } from './egress-guard.js';
 //                                     host (egress) or a rejected key is a readable
 //                                     check, never the key.
 //
-// The GitHub Copilot add-on (marinoscar/kvox-desktop#21); every response is a
-// `CopilotStatus` plus the `allowedHosts` the egress guard allows now:
+// GitHub Copilot is one of the three AI providers (marinoscar/kvox-desktop#21;
+// `settings.provider` is `openai`, `openai-compatible` or `copilot`, never off).
+// Its endpoints below; every response is a `CopilotStatus` plus the `allowedHosts`
+// the egress guard allows now:
 //
 // GET    /desktop/ai/copilot/status           enabled, signedIn, login, runtime
 //                                             state, models, unavailable tasks.
-// PATCH  /desktop/ai/copilot                  `Partial<CopilotSettings>`; switching on
-//                                             needs the current consent (409
-//                                             `consent_required`).
+// PATCH  /desktop/ai/copilot                  `Partial<CopilotSettings>`; `enabled` is the
+//                                             provider choice (`true`: provider `copilot`,
+//                                             `false`: back to `openai` when Copilot is the
+//                                             provider), and choosing it needs the current
+//                                             consent (409 `consent_required`).
 // POST   /desktop/ai/copilot/sign-in          a `CopilotSignInChallenge`.
 // POST   /desktop/ai/copilot/sign-in/wait     long-poll: resolves when signed in;
 //                                             abortable (the client hanging up
@@ -52,7 +56,7 @@ import type { EgressGuard } from './egress-guard.js';
 // DELETE /desktop/ai/copilot/runtime/download cancels it.
 // DELETE /desktop/ai/copilot/data             "Remove Copilot data" (`?includeRuntime=true`
 //                                             also removes the downloaded runtime); only
-//                                             with Copilot off (409 `copilot_enabled`).
+//                                             while Copilot is not the provider (409 `copilot_enabled`).
 //
 // 409s: `runtime_not_ready`, `runtime_download_unavailable`, `copilot_disabled`,
 // `sign_in_not_started`, `consent_required`; a sign-in that ends signed out is
@@ -87,7 +91,7 @@ export interface DesktopAiSettingsView {
     id: string;
     label: string;
     implemented: boolean;
-    /** False for an add-on (Copilot): not a choice of THE provider. */
+    /** True for a slot the user may choose as THE provider (all three). */
     primary: boolean;
     toolCalling: boolean;
     note: string;
