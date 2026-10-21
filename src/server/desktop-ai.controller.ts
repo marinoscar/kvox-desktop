@@ -7,7 +7,14 @@ import { KVOX_AI, type KvoxAiPort, type KvoxPrincipal } from '@marinoscar/kvox-a
 import { CopilotSettingsPatchSchema, type CopilotSignInChallenge, type CopilotStatus } from '@marinoscar/kvox-contract/copilot';
 import { CopilotConflictError } from './ai/copilot-service.js';
 import { DESKTOP_AI_PROVIDERS, needsKey, type DesktopAiSettings } from './ai/desktop-ai-settings.js';
-import { isSelectableProvider, type DesktopAi, type DesktopAiKeyStatus, type DesktopAiKeyTestResult } from './ai/desktop-ai.js';
+import {
+  LocalSearchConflictError,
+  isSelectableProvider,
+  type DesktopAi,
+  type DesktopAiKeyStatus,
+  type DesktopAiKeyTestResult,
+  type DesktopLocalSearchStatus,
+} from './ai/desktop-ai.js';
 import type { EgressGuard } from './egress-guard.js';
 
 // =============================================================================
@@ -57,6 +64,23 @@ import type { EgressGuard } from './egress-guard.js';
 // 409s: `runtime_not_ready`, `runtime_download_unavailable`, `copilot_disabled`,
 // `sign_in_not_started`, `consent_required`; a sign-in that ends signed out is
 // `AI_KEY_REQUIRED` with `details.signInReason`.
+//
+// On-device semantic search (marinoscar/kvox#660); every response is a `DesktopLocalSearchStatus`
+// `{ enabled, active, consentedAt, state, progress, error, model, sizeBytes, hosts }`:
+//
+// GET    /desktop/ai/local-search             the status. `state` is missing | downloading |
+//                                             ready | error; `progress` 0..1 while downloading.
+// POST   /desktop/ai/local-search/download    `{ consent: true }` (409 `consent_required`
+//                                             without it): THE consent action. Records
+//                                             `consentedAt`, switches the feature on, allows the
+//                                             download hosts while it runs, starts it (202).
+// DELETE /desktop/ai/local-search/download    cancels it and switches the feature off.
+// PATCH  /desktop/ai/local-search             `{ enabled: boolean }`; on needs the installed model
+//                                             (409 `model_not_ready`) and consent (409
+//                                             `consent_required`).
+// DELETE /desktop/ai/local-search             cancels any download, deletes the model, switches off.
+//
+// 409s also: `local_search_unavailable` (a build without the embedder).
 //
 // Host glue (marinoscar/kvox#584): no AI policy lives here. ⚠ No response
 // carries a key or a token.
@@ -130,7 +154,7 @@ export class DesktopAiController {
   @Patch('settings')
   @KvoxAuth()
   async patch(@CurrentKvoxPrincipal() principal: KvoxPrincipal, @Body() body: unknown): Promise<DesktopAiSettingsView> {
-    return this.view(await this.desktopAi.update(body, principal.userId));
+    return this.view(await this.localSearchCall(() => this.desktopAi.update(body, principal.userId)));
   }
 
   @Put('keys/:provider')
@@ -232,6 +256,56 @@ export class DesktopAiController {
   @KvoxAuth()
   async copilotRemoveData(@Query('includeRuntime') includeRuntime?: string): Promise<{ removed: string[]; keptRuntime: boolean }> {
     return this.copilotCall(() => this.desktopAi.copilotRemoveData(includeRuntime === 'true'));
+  }
+
+  // ---- On-device semantic search ----------------------------------------------
+
+  @Get('local-search')
+  @KvoxAuth()
+  async localSearchStatus(): Promise<DesktopLocalSearchStatus> {
+    return this.desktopAi.localSearchStatus();
+  }
+
+  @Post('local-search/download')
+  @HttpCode(202)
+  @KvoxAuth()
+  async localSearchDownload(@CurrentKvoxPrincipal() principal: KvoxPrincipal, @Body() body: unknown): Promise<DesktopLocalSearchStatus> {
+    const consent = typeof body === 'object' && body !== null ? (body as { consent?: unknown }).consent : undefined;
+    return this.localSearchCall(() => this.desktopAi.localSearchStartDownload(consent, principal.userId));
+  }
+
+  @Delete('local-search/download')
+  @KvoxAuth()
+  async localSearchDownloadCancel(@CurrentKvoxPrincipal() principal: KvoxPrincipal): Promise<DesktopLocalSearchStatus> {
+    return this.localSearchCall(() => this.desktopAi.localSearchCancelDownload(principal.userId));
+  }
+
+  @Patch('local-search')
+  @KvoxAuth()
+  async localSearchUpdate(@CurrentKvoxPrincipal() principal: KvoxPrincipal, @Body() body: unknown): Promise<DesktopLocalSearchStatus> {
+    const enabled = typeof body === 'object' && body !== null ? (body as { enabled?: unknown }).enabled : undefined;
+    if (typeof enabled !== 'boolean') {
+      throw new HttpException({ code: 'ai_settings_invalid', message: 'enabled: expected true or false' }, 400);
+    }
+    return this.localSearchCall(() => this.desktopAi.localSearchSetEnabled(enabled, principal.userId));
+  }
+
+  @Delete('local-search')
+  @KvoxAuth()
+  async localSearchRemove(@CurrentKvoxPrincipal() principal: KvoxPrincipal): Promise<DesktopLocalSearchStatus> {
+    return this.localSearchCall(() => this.desktopAi.localSearchRemove(principal.userId));
+  }
+
+  /** Answers a local-search conflict as its 409. */
+  private async localSearchCall<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      if (error instanceof LocalSearchConflictError) {
+        throw new HttpException({ code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) }, 409);
+      }
+      throw error;
+    }
   }
 
   private async copilotView(): Promise<DesktopCopilotStatus> {

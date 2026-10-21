@@ -153,6 +153,33 @@ function archiveEntriesOf(archive) {
   }
 }
 
+/**
+ * Problems with the on-device embedder's runtime (marinoscar/kvox#660): its WASM glue must be unpacked
+ * (a dynamic ESM import from inside app.asar is not safe), the archive must hold the Node entry and the
+ * wasm, and no browser build of onnxruntime-web (~140 MB) may be in it.
+ *
+ * @param {string} unpacked  `resources/app.asar.unpacked`
+ * @param {readonly string[]} archiveEntries  `app.asar` entries (empty when it cannot be listed: that part is skipped)
+ * @returns {string[]}
+ */
+export function embedderRuntimeProblems(unpacked, archiveEntries = []) {
+  const problems = [];
+  const dist = join(unpacked, 'node_modules', 'onnxruntime-web', 'dist');
+  if (!existsSync(join(dist, 'ort-wasm-simd-threaded.mjs'))) {
+    problems.push('the onnxruntime-web WASM glue is not unpacked (node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs)');
+  }
+  if (archiveEntries.length > 0) {
+    const entries = archiveEntries.map((entry) => entry.replaceAll('\\', '/'));
+    const inDist = entries.filter((entry) => entry.includes('/node_modules/onnxruntime-web/dist/'));
+    for (const needed of ['ort.node.min.js', 'ort-wasm-simd-threaded.wasm']) {
+      if (!inDist.some((entry) => entry.endsWith(`/${needed}`))) problems.push(`app.asar lacks onnxruntime-web/dist/${needed}`);
+    }
+    const extra = inDist.filter((entry) => !/\/(ort\.node\.min\.js|ort-wasm-simd-threaded\.(mjs|wasm))$/.test(entry));
+    if (extra.length > 0) problems.push(`app.asar carries onnxruntime-web browser builds (${extra[0]} and ${extra.length - 1} more)`);
+  }
+  return problems;
+}
+
 async function verify(executable, { allowBundledCopilot = false } = {}) {
   const resources = resourcesOf(executable);
   const unpacked = join(resources, 'app.asar.unpacked');
@@ -168,6 +195,8 @@ async function verify(executable, { allowBundledCopilot = false } = {}) {
   const engines = join(unpacked, 'node_modules', '@prisma', 'engines');
   const engine = existsSync(engines) ? readdirSync(engines).find((name) => name.startsWith('schema-engine')) : undefined;
   must(engine !== undefined, 'the Prisma schema engine is not unpacked');
+
+  for (const problem of embedderRuntimeProblems(unpacked, archiveEntriesOf(join(resources, 'app.asar')))) must(false, problem);
 
   for (const problem of copilotRuntimeProblems(resources, {
     archiveEntries: archiveEntriesOf(join(resources, 'app.asar')),

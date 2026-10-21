@@ -16,7 +16,7 @@ import {
   resolveMark,
 } from '../../scripts/build-icons.mjs';
 import { signingPlan } from '../../scripts/dist.mjs';
-import { EXPECTED_FUSES, MAX_LOOSE_FILE_BYTES, copilotRuntimeProblems } from '../../scripts/packaged-app.mjs';
+import { EXPECTED_FUSES, MAX_LOOSE_FILE_BYTES, copilotRuntimeProblems, embedderRuntimeProblems } from '../../scripts/packaged-app.mjs';
 import { unpackedSchemaEngine, workingDirectoryOf } from '../../src/server/database';
 
 // =============================================================================
@@ -226,6 +226,90 @@ describe('the Copilot runtime stays out of the default installer', () => {
       const elsewhere = layout({ 'app.asar': 10, 'app.asar.unpacked/runtime.node': RUNTIME });
       expect(copilotRuntimeProblems(elsewhere, { allowBundled: true })).toHaveLength(1);
       expect(copilotRuntimeProblems(layout({ 'app.asar': 10 }), { allowBundled: true, archiveEntries: ['/node_modules/@github/copilot-sdk-win32-x64/x'] })).toHaveLength(1);
+    });
+  });
+});
+
+// =============================================================================
+// The on-device embedder's runtime (marinoscar/kvox#660)
+// =============================================================================
+//
+// onnxruntime-web ships ~140 MB of browser builds; Node's `require` loads three
+// files of them. The default installer packs only those three, and unpacks the WASM
+// glue (a dynamic ESM import from inside app.asar is not safe in a utility process).
+// =============================================================================
+
+describe('the on-device embedder in the installer', () => {
+  const ORT = 'node_modules/onnxruntime-web/dist';
+
+  it('declares onnxruntime-web and the tokenizer as exact dependencies, in package.json and in the lock', () => {
+    const pkg = JSON.parse(read('package.json')) as { dependencies: Record<string, string> };
+    expect(pkg.dependencies['onnxruntime-web']).toBe('1.30.0');
+    expect(pkg.dependencies['@huggingface/tokenizers']).toBe('0.2.0');
+    const lock = JSON.parse(read('package-lock.json')) as { packages: Record<string, { version?: string }> };
+    expect(lock.packages['node_modules/onnxruntime-web']?.version).toBe('1.30.0');
+    expect(lock.packages['node_modules/@huggingface/tokenizers']?.version).toBe('0.2.0');
+  });
+
+  it('drops the browser builds and keeps exactly the three files Node loads', () => {
+    const files = /^files:\n((?: {2}.+\n)+)/m.exec(config)?.[1] ?? '';
+    const lines = files.split('\n').map((line) => line.trim());
+    const drop = lines.indexOf(`- "!${ORT}/**"`);
+    expect(drop).toBeGreaterThan(-1);
+    // Order matters: the keeps come AFTER the blanket exclusion.
+    for (const keep of ['ort.node.min.js', 'ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm']) {
+      expect(lines.indexOf(`- ${ORT}/${keep}`), keep).toBeGreaterThan(drop);
+    }
+    // The three are what the package loads: its Node entry requires only onnxruntime-common, and imports the glue.
+    const entry = readFileSync(join(ROOT, ORT, 'ort.node.min.js'), 'utf8');
+    expect([...new Set([...entry.matchAll(/require\("([^"]+)"\)/g)].map((m) => m[1]!).filter((name) => !name.startsWith('node:')))]).toEqual(['onnxruntime-common']);
+    expect(entry).toContain('ort-wasm-simd-threaded.mjs');
+  });
+
+  it('unpacks the WASM glue (and only it), never anything named for Copilot, and adds no extraResource', () => {
+    const unpack = /^asarUnpack:\n((?:(?: {2}.+| *#.*)\n)+)/m.exec(config)?.[1] ?? '';
+    const entries = unpack.split('\n').filter((line) => /^ {2}- /.test(line)).map((line) => line.trim().slice(2));
+    expect(entries).toContain(`${ORT}/ort-wasm-simd-threaded.mjs`);
+    expect(entries.filter((entry) => entry.includes('onnxruntime-web'))).toEqual([`${ORT}/ort-wasm-simd-threaded.mjs`]);
+    expect(unpack).not.toMatch(/copilot/i);
+    const extra = /^extraResources:\n((?:(?: {2}.+| *#.*)\n)+)/m.exec(config)?.[1] ?? '';
+    expect(extra).not.toMatch(/onnx|model|embed/i);
+  });
+
+  it('builds the embedder as its own main-process entry', () => {
+    const vite = read('electron.vite.config.ts');
+    expect(vite).toContain("embedder: resolve(__dirname, 'src/main/embedder.ts')");
+    expect(read('src', 'main', 'index.ts')).toContain("join(__dirname, 'embedder.js')");
+  });
+
+  describe('embedderRuntimeProblems (packaged-app.mjs verify)', () => {
+    let dir: string | undefined;
+    afterEach(() => dir && rmSync(dir, { recursive: true, force: true }));
+    const entries = ['/node_modules/onnxruntime-web/dist/ort.node.min.js', '/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm', '/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs'];
+
+    function unpackedWith(glue: boolean): string {
+      dir = mkdtempSync(join(tmpdir(), 'kvox-ort-'));
+      const dist = join(dir, 'node_modules', 'onnxruntime-web', 'dist');
+      mkdirSync(dist, { recursive: true });
+      if (glue) writeFileSync(join(dist, 'ort-wasm-simd-threaded.mjs'), '');
+      return dir;
+    }
+
+    it('passes the intended layout', () => {
+      expect(embedderRuntimeProblems(unpackedWith(true), entries)).toEqual([]);
+    });
+
+    it('fails a glue that is not unpacked, a missing entry or wasm, and any browser build in the archive', () => {
+      expect(embedderRuntimeProblems(unpackedWith(false), entries)).toEqual([
+        'the onnxruntime-web WASM glue is not unpacked (node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs)',
+      ]);
+      expect(embedderRuntimeProblems(unpackedWith(true), ['/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs'])).toEqual([
+        'app.asar lacks onnxruntime-web/dist/ort.node.min.js',
+        'app.asar lacks onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
+      ]);
+      expect(embedderRuntimeProblems(unpackedWith(true), [...entries, '/node_modules/onnxruntime-web/dist/ort.webgpu.min.mjs'])).toEqual([
+        'app.asar carries onnxruntime-web browser builds (/node_modules/onnxruntime-web/dist/ort.webgpu.min.mjs and 0 more)',
+      ]);
     });
   });
 });

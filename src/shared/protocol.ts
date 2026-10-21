@@ -29,7 +29,9 @@ export type ToServer =
   | { type: 'stop' }
   | { type: 'secrets-result'; id: number; ok: true; value: unknown }
   | { type: 'secrets-result'; id: number; ok: false; error: string }
-  | { type: 'run-node-result'; id: number; code: number | null; output: string };
+  | { type: 'run-node-result'; id: number; code: number | null; output: string }
+  | { type: 'embed-result'; id: number; ok: true; vectors: number[][] }
+  | { type: 'embed-result'; id: number; ok: false; error: string };
 
 /** Server -> main. */
 export type FromServer =
@@ -40,7 +42,20 @@ export type FromServer =
   | ({ type: 'secrets'; id: number } & SecretOp)
   | { type: 'notify'; title: string; body: string }
   | { type: 'restart'; reason: string }
-  | { type: 'run-node'; id: number; script: string; args: string[]; cwd: string; env: Record<string, string> };
+  | { type: 'run-node'; id: number; script: string; args: string[]; cwd: string; env: Record<string, string> }
+  /** Embed `texts` with the on-device model installed at `modelPath` (marinoscar/kvox#660); answered by `embed-result`. */
+  | { type: 'embed'; id: number; modelPath: string; texts: string[] };
+
+/** Main -> the embedder utility process (`src/main/embedder.ts`). One request at a time is answered, in order. */
+export interface EmbedderRequest {
+  id: number;
+  /** The installed model directory (`<userData>/models/<model id>`). */
+  modelPath: string;
+  texts: string[];
+}
+
+/** The embedder utility process -> main. Exactly one per request. */
+export type EmbedderResponse = { id: number; vectors: number[][] } | { id: number; error: string };
 
 /** What the preload hands the renderer. */
 export interface DesktopConnection {

@@ -122,6 +122,10 @@ describe('backup and restore', () => {
     // The Copilot runtime's private state (marinoscar/kvox-desktop#23): sign-in material, sessions and a downloaded runtime.
     const copilotSecret = `copilot-sign-in-${randomBytes(8).toString('hex')}`;
     writeCopilotFiles(folderA.copilot, copilotSecret);
+    // The on-device embedding model (marinoscar/kvox#660) is re-downloadable and never archived either.
+    const modelMarker = `local-model-${randomBytes(8).toString('hex')}`;
+    mkdirSync(join(folderA.models, 'bge-small-en-v1.5-int8'), { recursive: true });
+    writeFileSync(join(folderA.models, 'bge-small-en-v1.5-int8', 'model.onnx'), modelMarker);
 
     const archive = join(work, 'export', 'kvox.kvoxbackup');
     const exported = await runJob(backupJobs(a), BACKUP_EXPORT_JOB, archive);
@@ -132,6 +136,8 @@ describe('backup and restore', () => {
     const bytes = readFileSync(archive).toString('latin1');
     expect(bytes).not.toContain('copilot/');
     expect(bytes).not.toContain(copilotSecret);
+    expect(bytes).not.toContain('models/');
+    expect(bytes).not.toContain(modelMarker);
     await a.close({ keepFolder: true });
     open.pop();
 
@@ -141,6 +147,8 @@ describe('backup and restore', () => {
     expect(await b.prisma.note.count()).toBe(0);
     const folderBeforeRestore = dataFolder(b.userDataDir);
     writeCopilotFiles(folderBeforeRestore.copilot, 'profile-b-own-copilot-state');
+    mkdirSync(folderBeforeRestore.models, { recursive: true });
+    writeFileSync(join(folderBeforeRestore.models, 'b-own.onnx'), 'profile-b-model');
     let restartRequested = 0;
     const restored = await runJob(backupJobs(b, () => (restartRequested += 1)), BACKUP_RESTORE_JOB, archive);
     expect(restored).toMatchObject({ status: 'succeeded' });
@@ -170,6 +178,9 @@ describe('backup and restore', () => {
     expect(readFileSync(join(folderB.copilot, 'home', 'auth', 'token.json'), 'utf8')).toBe('profile-b-own-copilot-state');
     expect(existsSync(join(folderB.copilot, 'runtime', '1.0.98', 'installed.json'))).toBe(true);
     expect(readFileSync(join(folderB.copilot, 'home', 'auth', 'token.json'), 'utf8')).not.toContain(copilotSecret);
+    // Likewise the models folder: B keeps its own, A's never arrived.
+    expect(readFileSync(join(folderB.models, 'b-own.onnx'), 'utf8')).toBe('profile-b-model');
+    expect(existsSync(join(folderB.models, 'bge-small-en-v1.5-int8'))).toBe(false);
   });
 
   it('refuses an archive with an entry outside its folder, a bad checksum or a newer database', async () => {

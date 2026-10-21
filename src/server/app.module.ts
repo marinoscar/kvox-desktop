@@ -32,7 +32,9 @@ import { StorageObjectsController } from './storage-objects.controller.js';
 //   TranscriptionModule  NO provider at all (ADR-0006: Desktop has no
 //                        transcription); it is here because transcripts, a
 //                        peer of notes, needs it.
-//   SearchModule         full text (the AI binding offers no embeddings model)
+//   SearchModule         full text always; semantic search runs on the on-device
+//                        embedding model when the user switched it on (marinoscar/kvox#660,
+//                        `ai/local-embeddings.ts`), or on OpenAI's otherwise (a key)
 //   TranscriptsModule    no schedules, no transcode, no PDF exporter
 //   NotesModule          no schedules; Markdown, PDF and Word exports (the
 //                        packaged renderers, branded and offline: pdfkit

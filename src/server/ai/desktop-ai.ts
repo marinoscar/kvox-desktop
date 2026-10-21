@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 
 import {
+  KVOX_LOCAL_EMBEDDING,
   KVOX_TASK_IDS,
   createDirectRuntime,
   createKvoxAi,
@@ -14,6 +15,7 @@ import {
   type KvoxTaskUnavailable,
   type ProviderChoice,
 } from '@marinoscar/kvox-ai';
+import { LOCAL_EMBEDDING_DOWNLOAD_HOSTS, createLocalEmbeddingRuntime } from '@marinoscar/kvox-ai/local-embeddings';
 import type { KvoxAiPort, KvoxSecretStatus, KvoxSecretsPort, KvoxSettingsPort } from '@marinoscar/kvox-api/ports';
 import { AI_KEYLESS_API_KEY, AiError, type AiCallContext, type AiProviderAdapter } from '@marinoscar/platform-ai-providers';
 import { createOpenAiAdapter, createOpenAiCompatibleAdapter } from '@marinoscar/platform-ai-providers/openai';
@@ -35,6 +37,7 @@ import {
   type DesktopAiSettings,
   type SelectableAiProviderId,
 } from './desktop-ai-settings.js';
+import { LOCAL_EMBEDDING_SIZE_BYTES, LocalEmbeddingsService, type LocalEmbeddingsDownloader, type LocalEmbeddingsState } from './local-embeddings.js';
 import { createRoutedKvoxAi, type RoutedProvider } from './routed-kvox-ai.js';
 
 /** The Copilot provider id (`COPILOT_PROVIDER_ID` of `@marinoscar/kvox-ai/copilot`, which is not loaded until Copilot is on). */
@@ -64,6 +67,13 @@ const COPILOT_ID = 'copilot';
 // titles, graph extraction, the name check) and else to the primary provider when
 // that is usable (Ask, embeddings), else lists it as unavailable. Two
 // `createKvoxAi` ports (one per provider) sit behind `createRoutedKvoxAi`.
+//
+// ON-DEVICE SEMANTIC SEARCH (marinoscar/kvox#660) is a third port, over the package's
+// local embedding runtime, that serves ONLY `search.embed` (capabilities and embeddings)
+// and only while the user switched it on AND the model is installed. The embedding
+// itself runs in the main process's embedder utility process (`bridge.embed`); this
+// file holds no model mechanics. `graph.embed` stays with the primary provider: the
+// graph's similarity thresholds are tuned to OpenAI's vectors.
 //
 // THE EGRESS RULE: every settings change re-derives the allowlist
 // (`allowedHostsFor`) and hands it to the server's egress guard, so only the
@@ -135,6 +145,54 @@ export async function loadProviderAdapters(): Promise<DesktopAiAdapters> {
   return { adapters, close: async () => {} };
 }
 
+/** The on-device embedding model's host wiring (marinoscar/kvox#660). */
+export interface DesktopLocalSearchOptions {
+  /** `<userData>/models`. */
+  directory: string;
+  /** Embeds texts with the model installed at `modelPath`, in the embedder utility process (`MainBridge.embed`). */
+  embed: (modelPath: string, texts: string[]) => Promise<number[][]>;
+  /** A fake in the tests; the package's download otherwise. */
+  downloader?: LocalEmbeddingsDownloader;
+  /**
+   * Local search is on and the model is installed (at start-up, when a download ends, when the user
+   * switches it on): request indexing of the library. Must not throw.
+   */
+  onActive?: () => void;
+}
+
+/** `GET /desktop/ai/local-search`. */
+export interface DesktopLocalSearchStatus {
+  /** The user's switch. */
+  enabled: boolean;
+  /** Enabled AND the model is installed: `search.embed` is served on-device. */
+  active: boolean;
+  /** When the user consented to the one-time model download (ISO 8601). */
+  consentedAt: string | null;
+  state: LocalEmbeddingsState;
+  /** 0..1 while downloading, 1 when ready, else `null`. */
+  progress: number | null;
+  /** Why the last download failed; `null` otherwise. */
+  error: string | null;
+  /** The model's id. */
+  model: string;
+  /** The download's size: the sum of the manifest's files. */
+  sizeBytes: number;
+  /** The hosts the one-time download reaches (allowed only while it runs). */
+  hosts: string[];
+}
+
+/** Raised for the 409s of the local-search endpoints. */
+export class LocalSearchConflictError extends Error {
+  constructor(
+    readonly code: 'consent_required' | 'model_not_ready' | 'local_search_unavailable',
+    message: string,
+    readonly details?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = 'LocalSearchConflictError';
+  }
+}
+
 /** Options of {@link DesktopAi}. */
 export interface DesktopAiOptions {
   settings: KvoxSettingsPort;
@@ -158,6 +216,8 @@ export interface DesktopAiOptions {
    * Absent: no pre-check (the guard still blocks the connection itself).
    */
   checkEgress?: (host: string) => Error | null;
+  /** The on-device embedding model. Absent: local search is unavailable (its endpoints answer 409). */
+  localSearch?: DesktopLocalSearchOptions;
 }
 
 /** A Copilot host with no runtime: the status says `missing`. */
@@ -187,6 +247,10 @@ export class DesktopAi {
   readonly taskModels: KvoxTaskModelSource;
   /** The Copilot add-on's lifecycle. */
   readonly copilot: CopilotService;
+  /** The on-device embedding model's lifecycle. */
+  readonly localEmbeddings: LocalEmbeddingsService;
+  /** Who started the running model download (the settings writes on its end are theirs). */
+  private localActor: string | null = null;
   /** The runtime's provider map: the primary adapters, plus Copilot while its adapter exists. */
   private readonly adapters: Record<string, AiProviderAdapter>;
   private readonly primaryState: KvoxTaskModelSource;
@@ -209,12 +273,28 @@ export class DesktopAi {
       configurable: true,
       get: () => this.copilot.providerAdapter ?? undefined,
     });
+    this.localEmbeddings = new LocalEmbeddingsService({
+      directory: options.localSearch?.directory ?? '',
+      ...(options.localSearch?.downloader ? { downloader: options.localSearch.downloader } : {}),
+      log: options.log ?? (() => undefined),
+      onDownloadSettled: (state) => void this.localDownloadSettled(state).catch((error: unknown) => options.log?.(`local search: ${String(error)}`)),
+    });
     this.primaryState = { load: () => this.modelState() };
     this.copilotState = { load: () => this.copilotModelState() };
     this.taskModels = { load: async (userId) => ((await this.serving('notes.generate')) === 'copilot' ? this.copilotState.load(userId) : this.primaryState.load(userId)) };
     const runtime = createDirectRuntime({ adapters: this.adapters, keys: (provider) => this.keyFor(provider) });
     const timeout = options.requestTimeoutMs !== undefined ? { requestTimeoutMs: options.requestTimeoutMs } : {};
+    // The on-device embedding port: provider `local`, keyless, ready = installed AND switched on.
+    const local = options.localSearch
+      ? createKvoxAi({
+          runtime: createLocalEmbeddingRuntime({ embed: (texts) => this.embedLocally(texts), ready: () => this.localSearchActive() }),
+          taskModels: this.primaryState,
+          embedding: KVOX_LOCAL_EMBEDDING,
+          ...timeout,
+        })
+      : null;
     this.port = createRoutedKvoxAi({
+      ...(local ? { local: { port: local, active: () => this.localSearchActive() } } : {}),
       primary: createKvoxAi({ runtime, taskModels: this.primaryState, ...timeout }),
       copilot: createKvoxAi({
         runtime,
@@ -230,17 +310,20 @@ export class DesktopAi {
 
   /** The egress allowlist under these settings (and the npm registry host while the runtime downloads). */
   private hostsFor(settings: DesktopAiSettings): string[] {
-    return allowedHostsFor(settings, { runtimeDownload: this.copilot.downloading });
+    return allowedHostsFor(settings, { runtimeDownload: this.copilot.downloading, modelDownload: this.localEmbeddings.downloading });
   }
 
-  /** Brings Copilot up when the stored settings have it on (server start). */
+  /** Brings Copilot up when the stored settings have it on, and learns whether the on-device model is installed (server start). */
   async start(): Promise<void> {
     await this.applyCopilot(await this.read());
+    await this.localEmbeddings.init();
+    if (await this.localSearchActive()) this.options.localSearch?.onActive?.();
   }
 
-  /** Server shutdown: stops the Copilot runtime. */
+  /** Server shutdown: stops the Copilot runtime and any model download. */
   async close(): Promise<void> {
     await this.copilot.close();
+    await this.localEmbeddings.close();
   }
 
   /** The provider settings (the defaults while nothing is saved). */
@@ -259,6 +342,7 @@ export class DesktopAi {
   async update(patch: unknown, actorUserId: string): Promise<DesktopAiSettings> {
     if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) throw new BadRequestException('The AI settings patch must be an object');
     await this.requireConsentFor(patch);
+    await this.requireLocalSearchReadyFor(patch);
     let saved: DesktopAiSettings;
     try {
       saved = (await this.options.settings.patchSystem<DesktopAiSettings>(DESKTOP_AI_NAMESPACE, patch as Partial<DesktopAiSettings>, { actorUserId })).value;
@@ -274,6 +358,7 @@ export class DesktopAi {
     }
     this.options.onAllowedHosts(this.hostsFor(saved));
     await this.applyCopilot(saved);
+    if (await this.localSearchActive()) this.options.localSearch?.onActive?.();
     return saved;
   }
 
@@ -296,6 +381,122 @@ export class DesktopAi {
         message: 'Switching on GitHub Copilot needs your consent to the current terms first.',
         details: { consentVersion: COPILOT_CONSENT_VERSION },
       });
+    }
+  }
+
+  // ---- On-device semantic search (marinoscar/kvox#660) ------------------------------
+
+  /** Whether `search.embed` is served on-device now: switched on, consented, and the model is installed. */
+  async localSearchActive(): Promise<boolean> {
+    if (!this.options.localSearch || !this.localEmbeddings.ready) return false;
+    const { enabled, consentedAt } = (await this.read()).localSearch;
+    return enabled && consentedAt !== null;
+  }
+
+  private embedLocally(texts: string[]): Promise<number[][]> {
+    const path = this.localEmbeddings.modelPath;
+    if (!path || !this.options.localSearch) return Promise.reject(new Error('The on-device embedding model is not installed.'));
+    return this.options.localSearch.embed(path, texts);
+  }
+
+  /** Switching local search on needs the user's consent AND the installed model: refused before anything is written, whichever route asks. */
+  private async requireLocalSearchReadyFor(patch: object): Promise<void> {
+    const localSearch = (patch as { localSearch?: unknown }).localSearch;
+    if (typeof localSearch !== 'object' || localSearch === null || Array.isArray(localSearch)) return;
+    if ((localSearch as { enabled?: unknown }).enabled !== true) return;
+    const stored = (await this.read()).localSearch;
+    const consentedAt = (localSearch as { consentedAt?: unknown }).consentedAt ?? stored.consentedAt;
+    if (!this.options.localSearch) throw new LocalSearchConflictError('local_search_unavailable', 'On-device search is not available in this build.');
+    if (typeof consentedAt !== 'string' || consentedAt === '') {
+      throw new LocalSearchConflictError('consent_required', 'Download the on-device search model first: switching it on needs your consent to that one-time download.', this.localSearchFacts());
+    }
+    if (!this.localEmbeddings.ready) throw new LocalSearchConflictError('model_not_ready', 'The on-device search model is not installed yet.');
+  }
+
+  private localSearchFacts(): { sizeBytes: number; hosts: string[]; model: string } {
+    return { sizeBytes: LOCAL_EMBEDDING_SIZE_BYTES, hosts: [...LOCAL_EMBEDDING_DOWNLOAD_HOSTS], model: KVOX_LOCAL_EMBEDDING.model };
+  }
+
+  async localSearchStatus(): Promise<DesktopLocalSearchStatus> {
+    const { enabled, consentedAt } = (await this.read()).localSearch;
+    const snapshot = this.localEmbeddings.snapshot();
+    const facts = this.localSearchFacts();
+    return {
+      enabled,
+      active: await this.localSearchActive(),
+      consentedAt,
+      state: snapshot.state,
+      progress: snapshot.progress,
+      error: snapshot.error,
+      model: facts.model,
+      sizeBytes: facts.sizeBytes,
+      hosts: facts.hosts,
+    };
+  }
+
+  /**
+   * `POST /desktop/ai/local-search/download`: THE consent action. It records the consent, switches local
+   * search on, allows Hugging Face's hosts for the download only, and starts it. Already installed:
+   * it only switches the feature on.
+   */
+  async localSearchStartDownload(consent: unknown, actorUserId: string): Promise<DesktopLocalSearchStatus> {
+    if (!this.options.localSearch) throw new LocalSearchConflictError('local_search_unavailable', 'On-device search is not available in this build.');
+    if (consent !== true) {
+      throw new LocalSearchConflictError('consent_required', 'Downloading the on-device search model needs your consent first.', this.localSearchFacts());
+    }
+    const saved = (
+      await this.options.settings.patchSystem<DesktopAiSettings>(
+        DESKTOP_AI_NAMESPACE,
+        { localSearch: { enabled: true, consentedAt: new Date().toISOString() } } as Partial<DesktopAiSettings>,
+        { actorUserId },
+      )
+    ).value;
+    if (this.localEmbeddings.ready) {
+      this.options.localSearch.onActive?.();
+      return this.localSearchStatus();
+    }
+    this.localActor = actorUserId;
+    // The hosts are allowed BEFORE the first byte is asked for, and dropped when the download ends.
+    this.options.onAllowedHosts(allowedHostsFor(saved, { runtimeDownload: this.copilot.downloading, modelDownload: true }));
+    this.localEmbeddings.startDownload();
+    return this.localSearchStatus();
+  }
+
+  /** `DELETE /desktop/ai/local-search/download`: cancels a running download and switches local search off. */
+  async localSearchCancelDownload(actorUserId: string): Promise<DesktopLocalSearchStatus> {
+    this.localEmbeddings.cancelDownload();
+    await this.switchLocalSearchOff(actorUserId);
+    return this.localSearchStatus();
+  }
+
+  /** `PATCH /desktop/ai/local-search`: on (only with the model installed and consent given) or off. */
+  async localSearchSetEnabled(enabled: boolean, actorUserId: string): Promise<DesktopLocalSearchStatus> {
+    await this.update({ localSearch: { enabled } }, actorUserId);
+    return this.localSearchStatus();
+  }
+
+  /** `DELETE /desktop/ai/local-search`: cancels any download, deletes the model and switches local search off. */
+  async localSearchRemove(actorUserId: string): Promise<DesktopLocalSearchStatus> {
+    // Off first: from this moment `search.embed` is no longer served on-device.
+    await this.switchLocalSearchOff(actorUserId);
+    await this.localEmbeddings.remove();
+    return this.localSearchStatus();
+  }
+
+  private async switchLocalSearchOff(actorUserId: string): Promise<void> {
+    if (!(await this.read()).localSearch.enabled) return;
+    await this.options.settings.patchSystem<DesktopAiSettings>(DESKTOP_AI_NAMESPACE, { localSearch: { enabled: false } } as Partial<DesktopAiSettings>, { actorUserId });
+  }
+
+  /** A model download stopped running: drop the download hosts, and either index the library or switch the feature off. */
+  private async localDownloadSettled(state: LocalEmbeddingsState): Promise<void> {
+    const settings = await this.read();
+    this.options.onAllowedHosts(this.hostsFor(settings));
+    if (state === 'ready') {
+      if (await this.localSearchActive()) this.options.localSearch?.onActive?.();
+    } else if (this.localActor !== null) {
+      // Cancelled or failed: the feature was switched on for this download, so it goes back off (the consent stays).
+      await this.switchLocalSearchOff(this.localActor);
     }
   }
 

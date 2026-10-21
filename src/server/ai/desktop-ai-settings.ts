@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { COPILOT_EGRESS_HOSTS } from '@marinoscar/kvox-ai/copilot';
+import { LOCAL_EMBEDDING_DOWNLOAD_HOSTS } from '@marinoscar/kvox-ai/local-embeddings';
 import { COPILOT_CONSENT_VERSION, COPILOT_DEFAULT_SETTINGS, CopilotSettingsSchema, type CopilotSettings } from '@marinoscar/kvox-contract/copilot';
 import type { KvoxSettingsNamespaceDef } from '@marinoscar/kvox-api/ports';
 
@@ -31,9 +32,17 @@ import { COPILOT_RUNTIME_DOWNLOAD_HOSTS } from './copilot-sandbox.js';
 //                      serve them, else they are reported unavailable. Its models
 //                      report toolCalling=false.
 //
+//   localSearch        ON-DEVICE SEMANTIC SEARCH (marinoscar/kvox#660): an opt-in add-on,
+//                      default off. A small embedding model runs on this machine, so
+//                      search works with no API key and offline. Turned on only after
+//                      the user consented to the one-time model download. While it is on
+//                      AND the model is installed, `search.embed` is served by it;
+//                      nothing else changes.
+//
 // THE EGRESS RULE: the server may reach exactly the active provider's host and,
 // only while Copilot is on, the Copilot hosts ({@link allowedHostsFor}), besides
-// loopback, which is always allowed.
+// loopback, which is always allowed. The one-time model download widens the list
+// to Hugging Face's hosts for as long as it runs, and not a second longer.
 // =============================================================================
 
 /** The KVOX_SETTINGS system namespace. */
@@ -115,6 +124,18 @@ const baseUrl = z
 /** Copilot off, no consent, no model chosen. */
 export const DEFAULT_COPILOT_SETTINGS: CopilotSettings = { ...COPILOT_DEFAULT_SETTINGS };
 
+/** On-device semantic search (marinoscar/kvox#660): off, no consent. */
+export const DEFAULT_LOCAL_SEARCH_SETTINGS = { enabled: false, consentedAt: null } as const;
+
+export const localSearchSettingsSchema = z.object({
+  /** The user switched it on (it only takes effect while the model is installed). */
+  enabled: z.boolean().default(false),
+  /** When the user consented to the one-time model download (ISO 8601), or `null`. */
+  consentedAt: z.string().nullable().default(null),
+});
+
+export type LocalSearchSettings = z.infer<typeof localSearchSettingsSchema>;
+
 export const desktopAiSettingsSchema = z.object({
   /** The active provider, or `null` for AI off. */
   provider: z.enum(SELECTABLE_AI_PROVIDER_IDS).nullable(),
@@ -131,6 +152,8 @@ export const desktopAiSettingsSchema = z.object({
    * the adapter existed parses to the defaults: off, no consent. Nothing here ever turns it on.
    */
   copilot: CopilotSettingsSchema.default(() => ({ ...DEFAULT_COPILOT_SETTINGS })),
+  /** On-device semantic search. Settings stored before it existed parse to off. */
+  localSearch: localSearchSettingsSchema.default(() => ({ ...DEFAULT_LOCAL_SEARCH_SETTINGS })),
 });
 
 export type DesktopAiSettings = z.infer<typeof desktopAiSettingsSchema>;
@@ -140,6 +163,7 @@ export const DEFAULT_DESKTOP_AI_SETTINGS: DesktopAiSettings = {
   openai: { model: DEFAULT_OPENAI_MODEL },
   openaiCompatible: { baseUrl: null, model: null, apiStyle: 'chat_completions', requiresKey: true },
   copilot: { ...DEFAULT_COPILOT_SETTINGS },
+  localSearch: { ...DEFAULT_LOCAL_SEARCH_SETTINGS },
 };
 
 /** The namespace as KVOX_SETTINGS registers it. */
@@ -175,11 +199,12 @@ export function copilotActive(settings: DesktopAiSettings): boolean {
 /**
  * The hosts the server may reach under these settings: the active provider's
  * host, plus the Copilot hosts while (and only while) Copilot is on, and GitHub's release
- * hosts while (and only while) its one-time runtime download runs. A server on
+ * hosts while (and only while) its one-time runtime download runs, and Hugging Face's
+ * while (and only while) the one-time on-device model download runs. A server on
  * this device needs no entry (loopback is always allowed), so it answers an empty
  * list.
  */
-export function allowedHostsFor(settings: DesktopAiSettings, options: { runtimeDownload?: boolean } = {}): string[] {
+export function allowedHostsFor(settings: DesktopAiSettings, options: { runtimeDownload?: boolean; modelDownload?: boolean } = {}): string[] {
   const hosts: string[] = [];
   if (settings.provider === 'openai') hosts.push(OPENAI_HOST);
   else if (settings.provider === 'openai-compatible' && settings.openaiCompatible.baseUrl) {
@@ -191,5 +216,8 @@ export function allowedHostsFor(settings: DesktopAiSettings, options: { runtimeD
     // The one-time runtime download (the npm registry host), for as long as it runs.
     if (options.runtimeDownload) for (const host of COPILOT_RUNTIME_DOWNLOAD_HOSTS) if (!hosts.includes(host)) hosts.push(host);
   }
+  // The on-device model download (marinoscar/kvox#660): consented (the endpoint that starts it records the
+  // consent), and only while it runs. The model itself is then used with no network at all.
+  if (options.modelDownload) for (const host of LOCAL_EMBEDDING_DOWNLOAD_HOSTS) if (!hosts.includes(host)) hosts.push(host);
   return hosts;
 }

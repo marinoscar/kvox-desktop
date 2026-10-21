@@ -9,3 +9,4 @@ export declare function copilotRuntimeProblems(
   resources: string,
   options?: { archiveEntries?: string[]; allowBundled?: boolean },
 ): string[];
+export declare function embedderRuntimeProblems(unpacked: string, archiveEntries?: readonly string[]): string[];

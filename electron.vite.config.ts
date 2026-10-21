@@ -11,6 +11,7 @@ import { defineConfig, swcPlugin } from 'electron-vite';
 //          out/main/server.js  the server utility process (Nest + PGlite)
 //          out/main/node-script-host.js  a migration command's utility process
 //          out/main/shacl-validate.js    one SHACL validation of the graph import
+//          out/main/embedder.js          the on-device embedding model's utility process (marinoscar/kvox#660)
 //          Runtime dependencies stay external (`build.externalizeDeps`, the
 //          default) and ship in node_modules; SWC compiles the decorators with
 //          their metadata, which Nest's dependency injection reads.
@@ -28,6 +29,7 @@ export default defineConfig({
           server: resolve(__dirname, 'src/server/index.ts'),
           'node-script-host': resolve(__dirname, 'src/main/node-script-host.ts'),
           'shacl-validate': resolve(__dirname, 'src/main/shacl-validate.ts'),
+          embedder: resolve(__dirname, 'src/main/embedder.ts'),
         },
       },
     },

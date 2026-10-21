@@ -22,6 +22,7 @@ import { dataFolder } from './data-folder.js';
 import { PGLITE_EXTENSIONS, createPrismaClient, startDatabase, type NodeScriptRunner } from './database.js';
 import { EgressGuard } from './egress-guard.js';
 import { Housekeeping } from './housekeeping.js';
+import { createSearchBackfill } from './search-backfill.js';
 import { DesktopNotify } from './ports/desktop-notify.js';
 import { JsonlAudit } from './ports/jsonl-audit.js';
 import { LaunchTokenIdentity } from './ports/launch-token-identity.js';
@@ -89,6 +90,11 @@ export interface StartServerOptions {
   copilotE2eMock?: boolean;
   /** Electron `safeStorage`, through the main process. */
   cipher: SecretCipher;
+  /**
+   * Embeds texts with the on-device model installed at `modelPath`, off this process (the main process's
+   * embedder utility process; marinoscar/kvox#660). Absent: on-device search is unavailable.
+   */
+  embed?: (modelPath: string, texts: string[]) => Promise<number[][]>;
   /** Shows an OS notification (the main process). */
   showNotification: (title: string, body: string) => void;
   /** Asks the main process to restart the server (a restore is staged). */
@@ -159,6 +165,14 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     settings.registerNamespace(DESKTOP_AI_SETTINGS_NAMESPACE);
     const secrets = new SafeStorageSecrets({ file: folder.secrets, cipher: options.cipher, log: options.log });
     providers = await loadProviderAdapters();
+    // Indexing for on-device search (marinoscar/kvox#660): asked when the model is ready, at start-up and hourly.
+    // The application does not exist yet while the AI binding starts; the first run after `listen` covers that.
+    const searchBackfill = createSearchBackfill({
+      app: () => app,
+      userId: LOCAL_USER_ID,
+      active: () => desktopAi.localSearchActive(),
+      log: options.log,
+    });
     const desktopAi = new DesktopAi({
       settings,
       secrets,
@@ -169,6 +183,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         ? (await import('./ai/copilot-e2e-host.js')).createE2eCopilotHost(folder.copilot)
         : createDefaultCopilotHost({ folder, log: options.log }),
       log: options.log,
+      ...(options.embed
+        ? { localSearch: { directory: folder.models, embed: options.embed, onActive: () => void searchBackfill.run() } }
+        : {}),
       onAllowedHosts: (hosts) => {
         egress.allow(hosts);
         options.log(`server: egress allowlist is loopback${hosts.length > 0 ? ` and ${hosts.join(', ')}` : ' only'}`);
@@ -257,8 +274,10 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       options.log(`jobs: ${recovered.requeued} interrupted job(s) queued again, ${recovered.failed} failed`);
     }
     jobs.start();
-    const housekeeping = new Housekeeping(app, { log: options.log });
+    const housekeeping = new Housekeeping(app, { log: options.log, searchBackfill: () => searchBackfill.run() });
     housekeeping.start();
+    // On-device search already on at start-up: index what is missing now, not in an hour.
+    void searchBackfill.run();
     timings.serverStart = Math.round(performance.now() - started);
     options.log(`server: listening on ${baseUrl} (${JSON.stringify(timings)})`);
 

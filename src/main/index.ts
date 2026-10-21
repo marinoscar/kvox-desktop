@@ -7,6 +7,7 @@ import { BrowserWindow, Notification, app, dialog, ipcMain, nativeTheme, net, pr
 
 import { parseThemeMode, type DesktopConnection, type FromServer, type ThemeMode, type ToServer } from '../shared/protocol';
 import { windowIconPath } from './app-icon';
+import { EmbedderBroker } from './embedder-broker';
 import { installApplicationMenu, type MenuActions } from './menu';
 import { runNodeScript } from './node-scripts';
 import { openExternalChecked } from './open-external';
@@ -65,6 +66,15 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let server: UtilityProcess | undefined;
+
+/**
+ * The on-device embedder (marinoscar/kvox#660): forked on the first `embed` request of the
+ * server, stopped when idle and at quit. With local search off it never exists.
+ */
+const embedder = new EmbedderBroker({
+  fork: () => utilityProcess.fork(join(__dirname, 'embedder.js'), [], { serviceName: 'KVox embedder', stdio: 'inherit' }),
+  log,
+});
 let connection: Promise<DesktopConnection> | undefined;
 let stopping: Promise<void> | undefined;
 let mainWindow: BrowserWindow | undefined;
@@ -113,6 +123,12 @@ function startServer(): Promise<DesktopConnection> {
         if (Notification.isSupported()) new Notification({ title: message.title, body: message.body }).show();
       } else if (message.type === 'run-node') {
         void runNodeScript(message).then(({ code, output }) => child.postMessage({ type: 'run-node-result', id: message.id, code, output } satisfies ToServer));
+      } else if (message.type === 'embed') {
+        embedder.request(message.modelPath, message.texts).then(
+          (vectors) => child.postMessage({ type: 'embed-result', id: message.id, ok: true, vectors } satisfies ToServer),
+          (error: unknown) =>
+            child.postMessage({ type: 'embed-result', id: message.id, ok: false, error: error instanceof Error ? error.message : String(error) } satisfies ToServer),
+        );
       } else if (message.type === 'restart') {
         void restartServer(message.reason);
       } else if (message.type === 'ready') {
@@ -131,6 +147,9 @@ function startServer(): Promise<DesktopConnection> {
     });
     child.on('exit', (code) => {
       if (server === child) server = undefined;
+      // The server's requests died with it: no embedder outlives the server that asked.
+      embedder.shutdown();
+      embedder.reopen();
       if (!stopping) {
         log(`server exited unexpectedly (code ${code})`);
         reject(new Error(`The local server exited (code ${code})`));
@@ -376,6 +395,10 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', (event) => {
     if (!server || stopping) return;
     event.preventDefault();
-    void stopServer().finally(() => app.quit());
+    void stopServer().finally(() => {
+      embedder.shutdown();
+      app.quit();
+    });
   });
+  app.on('will-quit', () => embedder.shutdown());
 }
