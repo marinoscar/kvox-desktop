@@ -12,7 +12,7 @@ import { COPILOT_CONSENT_COPY } from '@marinoscar/kvox-web/copilot/headless';
 // =============================================================================
 
 export const COPILOT_CONSENT_TITLE = COPILOT_CONSENT_COPY.title;
-export const COPILOT_ACCEPT_LABEL = COPILOT_CONSENT_COPY.acceptLabel;
+export const COPILOT_ACCEPT_LABEL = COPILOT_CONSENT_COPY.acceptSelectedLabel;
 /** The option of the "AI provider" radio group (the server's label). */
 export const COPILOT_RADIO = 'GitHub Copilot';
 export const COPILOT_SIGN_IN_BUTTON = 'Sign in with GitHub Copilot';

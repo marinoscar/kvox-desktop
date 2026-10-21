@@ -274,7 +274,7 @@ describe('choosing GitHub Copilot', () => {
 
     fireEvent.click(radio('GitHub Copilot'));
     await waitFor(() => expect(consentDialog()).not.toBeNull());
-    fireEvent.click(within(consentDialog()!).getByRole('button', { name: COPILOT_CONSENT_COPY.acceptLabel }));
+    fireEvent.click(within(consentDialog()!).getByRole('button', { name: COPILOT_CONSENT_COPY.acceptSelectedLabel }));
     await waitFor(() => expect(state.provider).toBe('copilot'));
     expect(patches(requests, '/desktop/ai/copilot').map((request) => request.body)).toEqual([
       { enabled: true, consentedAt: expect.any(String), consentVersion: COPILOT_CONSENT_VERSION },
