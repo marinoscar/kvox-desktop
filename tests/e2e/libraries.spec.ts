@@ -22,9 +22,6 @@ import { homeHeading } from '../support/rail';
 //                                    finds nothing new
 //
 // No request may reach a host other than 127.0.0.1, and the window never sees the folder's absolute path.
-//
-// SKIPPED until the @marinoscar/kvox-* release that carries note libraries is pinned in package.json: the
-// pages, routes and server endpoints it drives are not in 0.1.0-next.13.
 // =============================================================================
 
 const ROOT = resolve(__dirname, '..', '..');
@@ -34,7 +31,6 @@ const requests: string[] = [];
 let app: ElectronApplication | undefined;
 let provider: OpenAiCompatibleMock | undefined;
 
-test.skip(true, 'Needs the @marinoscar/kvox-* release with note libraries (marinoscar/kvox#708); 0.1.0-next.13 lacks them.');
 
 test.beforeAll(async () => {
   provider = await startOpenAiCompatibleMock(MOCK_NOTE_TEXT);
