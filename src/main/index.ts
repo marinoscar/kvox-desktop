@@ -11,6 +11,7 @@ import { EmbedderBroker } from './embedder-broker';
 import { installApplicationMenu, type MenuActions } from './menu';
 import { runNodeScript } from './node-scripts';
 import { openExternalChecked } from './open-external';
+import { registerFilesIpc } from './files/ipc';
 import { registerImportIpc } from './import';
 import { runSecretOp, secretStorageStatus } from './secret-storage';
 import { readShellSettings, writeShellSettings } from './shell-settings';
@@ -379,6 +380,9 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.handle('kvox:connection', () => connection);
   registerShellIpc();
   registerImportIpc({ window: () => mainWindow, connection: () => connection, log });
+  // The note libraries' file port (marinoscar/kvox-desktop#47): picked folders, walks, hashes, reads, watchers.
+  const files = registerFilesIpc({ window: () => mainWindow, settingsPath, log });
+  app.on('will-quit', () => files.close());
 
   void app.whenReady().then(() => {
     installEgressGuard();

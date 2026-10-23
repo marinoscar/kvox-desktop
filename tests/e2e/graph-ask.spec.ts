@@ -6,7 +6,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 
 import type { KvoxDesktopBridge } from '../../src/shared/protocol';
 import { MOCK_NOTE_TEXT, configureAiProvider } from '../support/configure-ai';
-import { goTo, railItem } from '../support/rail';
+import { goTo, homeHeading, railItem } from '../support/rail';
 import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
 import { QUESTIONS, scriptedModel } from '../support/scripted-model';
 
@@ -196,7 +196,7 @@ test('the reference questions are answered with citations, and a manager set by 
   page.on('console', (message) => {
     if (message.type() === 'error' && /CORS|blocked/i.test(message.text())) consoleErrors.push(message.text().slice(0, 300));
   });
-  await expect(page.getByRole('heading', { name: 'Notes', level: 1 })).toBeVisible({ timeout: 180_000 });
+  await expect(homeHeading(page)).toBeVisible({ timeout: 180_000 });
   await configureAiProvider(page, { baseUrl: provider!.baseUrl, apiKey: 'sk-e2e-graph-0123456789abcdef' });
 
   // ---- Import, extract, review, commit: the three meetings ------------------
@@ -268,7 +268,7 @@ test('the reference questions are answered with citations, and a manager set by 
   expect(before.content).not.toContain(MEETINGS[2].title);
 
   // ---- Set her manager by hand on her entity page ---------------------------
-  await page.goto(page.url().replace(/#.*$/, `#/graph/entities/${person.get('Priya Shah')}`));
+  await page.goto(page.url().split('#')[0] + `#/graph/entities/${person.get('Priya Shah')}`);
   await expect(page.getByRole('heading', { name: 'Priya Shah', level: 1 })).toBeVisible();
   await page.getByRole('button', { name: 'Set manager' }).click();
   const dialog = page.getByRole('dialog', { name: 'Set manager' });

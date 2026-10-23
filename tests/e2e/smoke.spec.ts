@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
 import { MOCK_NOTE_TEXT, configureAiProvider, openSettingsCard } from '../support/configure-ai';
-import { expectRail, goTo, rail, railItem, useWideWindow, userMenuButton } from '../support/rail';
+import { expectRail, goTo, homeHeading, rail, railItem, userMenuButton, useWideWindow } from '../support/rail';
 import { COPILOT_CONSENT_TITLE, COPILOT_RADIO } from '../support/copilot-ui';
 import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
 
@@ -47,11 +47,16 @@ async function launch(label: string): Promise<{ app: ElectronApplication; page: 
   app.process().stderr?.on('data', (chunk: Buffer) => mainLog.push(...chunk.toString().split('\n').filter(Boolean)));
   app.context().on('request', (request) => requests.push(request.url()));
   const page = await app.firstWindow();
-  await page.waitForURL(/#\/notes/, { timeout: 180_000 });
-  await expect(page.getByRole('heading', { name: 'Notes', level: 1 })).toBeVisible({ timeout: 180_000 });
+  // The window opens on Home (marinoscar/kvox-desktop#47).
+  // HashRouter leaves the first URL without a hash (index.html) until something navigates.
+  await page.waitForURL(/index\.html(#\/)?$/, { timeout: 180_000 });
+  await expect(homeHeading(page)).toBeVisible({ timeout: 180_000 });
   const ms = Date.now() - started;
-  metrics[`${label}LaunchToNotesMs`] = ms;
+  metrics[`${label}LaunchToHomeMs`] = ms;
   await useWideWindow(app, page);
+  // The checks below start from the notes library.
+  await goTo(page, 'Notes');
+  await page.waitForURL(/#\/notes$/);
   return { app, page, ms };
 }
 
@@ -173,10 +178,10 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   await expect.poll(background).toBe(LIGHT_GROUND);
 
   // ---- The shell (marinoscar/kvox-desktop#18) ---------------------------------------
-  // KvoxAppShell, as on KVox web: a left rail of icons and labels (Notes, Knowledge, Review, Ask; Settings
+  // KvoxAppShell, as on KVox web: a left rail of icons and labels (Home, Notes, Knowledge, Review, Ask; Settings
   // pinned at the foot, no Templates: it is a Settings card), the KVox name in the app bar, and a user menu
   // with the two desktop rows and no sign-out. Rail items are found by role and name.
-  await expectRail(page, ['Notes', 'Knowledge', 'Review', 'Ask', 'Settings']);
+  await expectRail(page, ['Home', 'Notes', 'Knowledge', 'Review', 'Ask', 'Settings']);
   await expect(railItem(page, 'Notes')).toHaveAttribute('aria-current', 'page');
   await expect(page.locator('header').getByText('KVox', { exact: true })).toBeVisible();
   for (const [name, path] of [
@@ -185,6 +190,7 @@ test('a note generated from a Markdown file survives a restart, with no egress',
     ['Ask', /#\/ask$/],
     ['Settings', /#\/settings$/],
     ['Notes', /#\/notes$/],
+    ['Home', /#\/$/],
   ] as const) {
     await goTo(page, name);
     await page.waitForURL(path);

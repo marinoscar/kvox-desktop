@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
 import { openSettingsCard } from '../support/configure-ai';
-import { goTo, railItem } from '../support/rail';
+import { goTo, homeHeading, railItem } from '../support/rail';
 import {
   COPILOT_ACCEPT_LABEL,
   COPILOT_CONSENT_TITLE,
@@ -62,8 +62,10 @@ async function launch(): Promise<{ app: ElectronApplication; page: Page }> {
   app.process().stderr?.on('data', (chunk: Buffer) => mainLog.push(...chunk.toString().split('\n').filter(Boolean)));
   app.context().on('request', (request) => requests.push(request.url()));
   const page = await app.firstWindow();
-  await page.waitForURL(/#\/notes/, { timeout: 180_000 });
-  await expect(page.getByRole('heading', { name: 'Notes', level: 1 })).toBeVisible({ timeout: 180_000 });
+  // The window opens on Home (marinoscar/kvox-desktop#47).
+  // HashRouter leaves the first URL without a hash (index.html) until something navigates.
+  await page.waitForURL(/index\.html(#\/)?$/, { timeout: 180_000 });
+  await expect(homeHeading(page)).toBeVisible({ timeout: 180_000 });
   return { app, page };
 }
 

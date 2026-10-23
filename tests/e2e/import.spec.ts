@@ -7,6 +7,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import type { KvoxDesktopBridge } from '../../src/shared/protocol';
 import { MOCK_NOTE_TEXT, configureAiProvider } from '../support/configure-ai';
 import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
+import { homeHeading } from '../support/rail';
 
 // =============================================================================
 // Import from a native dialog and by drag and drop (marinoscar/kvox#585)
@@ -15,11 +16,12 @@ import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support
 // Each input kind, through the packaged app, with the synthetic fixtures of
 // tests/fixtures/import:
 //
-//   PDF transcript      dialog  -> "New note" with the document chosen, text read
+//   PDF transcript      dialog  -> the import batch's progress page (a note document,
+//                                  marinoscar/kvox-desktop#47)
 //   transcript JSON     dialog  -> "New note" with the transcript chosen; named
 //                                  speakers and recordedAt kept; a note generated
 //   note export (.md)   drop    -> the note, same title and body as exported
-//   Markdown            drop    -> "New note" with the document chosen
+//   Markdown            drop    -> the import batch's progress page
 //   foreign JSON        dialog  -> the slice's own refusal, nothing opened
 //
 // The dialog is Electron's own `dialog.showOpenDialog`, answered with the
@@ -86,19 +88,17 @@ test('every input kind imports from the dialog or by drag and drop, with no egre
   app.process().stderr?.on('data', (chunk: Buffer) => mainLog.push(...chunk.toString().split('\n').filter(Boolean)));
   app.context().on('request', (request) => requests.push(request.url()));
   const page = await app.firstWindow();
-  await expect(page.getByRole('heading', { name: 'Notes', level: 1 })).toBeVisible({ timeout: 180_000 });
+  await expect(homeHeading(page)).toBeVisible({ timeout: 180_000 });
   await configureAiProvider(page, { baseUrl: provider!.baseUrl, apiKey: 'sk-e2e-import-0123456789abcdef' });
 
   // ---- PDF transcript, from the dialog --------------------------------------
   await answerDialogWith(app, [join(FIXTURES, 'roadmap-sync-transcript.pdf')]);
   await page.getByRole('button', { name: 'Import…' }).click();
-  await page.waitForURL(/#\/notes\/new\?objectId=/);
-  await expect(page.getByRole('radio', { name: /A document/ })).toBeChecked();
-  await expect(page.getByText('roadmap-sync-transcript.pdf')).toBeVisible();
-  await expect(page.getByText('Document read')).toBeVisible();
+  await page.waitForURL(/#\/notes\/import-batches\/[^/?]+$/);
+  await expect(page.getByText('roadmap-sync-transcript.pdf').first()).toBeVisible();
 
   // ---- Transcript JSON, from the dialog: speakers and date kept, then a note --
-  await page.goto(page.url().replace(/#.*$/, '#/notes'));
+  await page.goto(page.url().split('#')[0] + '#/notes');
   await answerDialogWith(app, [join(FIXTURES, 'm03-roadmap-sync.transcript.json')]);
   await page.getByRole('button', { name: 'Import…' }).click();
   await page.waitForURL(/#\/notes\/new\?transcriptId=/);
@@ -113,7 +113,7 @@ test('every input kind imports from the dialog or by drag and drop, with no egre
 
   // ---- Note export, dropped on the window: same title and body ---------------
   const expected = JSON.parse(readFileSync(join(FIXTURES, 'planning-sync-note.expected.json'), 'utf8')) as { title: string; body: string };
-  await page.goto(page.url().replace(/#.*$/, '#/notes'));
+  await page.goto(page.url().split('#')[0] + '#/notes');
   await expect(page.getByRole('heading', { name: 'Notes', level: 1 })).toBeVisible();
   await dropFiles(app, page, [join(FIXTURES, 'planning-sync-note.md')]);
   await page.waitForURL(/#\/notes\/[0-9a-f-]{36}$/);
@@ -123,13 +123,13 @@ test('every input kind imports from the dialog or by drag and drop, with no egre
   const note = await apiGet<{ title: string; body: string }>(page, `/notes/${noteId}`);
   expect(note).toMatchObject({ title: expected.title, body: expected.body });
 
-  // ---- Markdown, dropped: a note source ------------------------------------
+  // ---- Markdown, dropped: a note document, into an import batch ------------
   await dropFiles(app, page, [join(FIXTURES, 'standup.md')]);
-  await page.waitForURL(/#\/notes\/new\?objectId=/);
-  await expect(page.getByText('Document read')).toBeVisible();
+  await page.waitForURL(/#\/notes\/import-batches\/[^/?]+$/);
+  await expect(page.getByText('standup.md').first()).toBeVisible();
 
   // ---- A foreign JSON: the slice's own refusal, nothing opened ---------------
-  await page.goto(page.url().replace(/#.*$/, '#/notes'));
+  await page.goto(page.url().split('#')[0] + '#/notes');
   await answerDialogWith(app, [join(FIXTURES, 'foreign.json')]);
   await page.getByRole('button', { name: 'Import…' }).click();
   await expect(page.getByTestId('import-error')).toBeVisible();

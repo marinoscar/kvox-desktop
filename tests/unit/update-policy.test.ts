@@ -95,6 +95,7 @@ describe('the "Check for updates" setting', () => {
       updates: { checkForUpdates: true },
       themeMode: 'system',
       shell: { railCollapsed: false },
+      files: { folders: {}, libraries: {} },
     });
     settings.updates.checkForUpdates = false;
     writeShellSettings(path, settings);

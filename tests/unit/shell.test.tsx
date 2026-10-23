@@ -152,13 +152,13 @@ afterEach(() => {
 });
 
 describe('the destinations', () => {
-  it('lists Notes, Knowledge, Review, Ask and Settings pinned at the foot, with no Templates row', async () => {
+  it('lists Home, Notes, Knowledge, Review, Ask and Settings pinned at the foot, with no Templates row', async () => {
     install();
     await renderApp();
-    await waitFor(() => expect(railNames()).toEqual(['Notes', 'Knowledge', 'Review', 'Ask', 'Settings']));
+    await waitFor(() => expect(railNames()).toEqual(['Home', 'Notes', 'Knowledge', 'Review', 'Ask', 'Settings']));
     // Templates is a Settings card (the hub lists it), not a destination.
     expect(within(mainNavigation()).queryByRole('link', { name: 'Templates' })).toBeNull();
-    expect(DESKTOP_NAVIGATION.destinations.map((destination) => destination.key)).toEqual(['notes', 'knowledge', 'review', 'ask', 'settings']);
+    expect(DESKTOP_NAVIGATION.destinations.map((destination) => destination.key)).toEqual(['home', 'notes', 'knowledge', 'review', 'ask', 'settings']);
     expect(DESKTOP_NAVIGATION.destinations.find((destination) => destination.key === 'settings')?.pinned).toBe(true);
   });
 
@@ -172,15 +172,15 @@ describe('the destinations', () => {
   it('hides Knowledge, Review and Ask while connected knowledge is off, and shows them again without a restart', async () => {
     install({ graphEnabled: false });
     await renderApp('#/settings/knowledge');
-    await waitFor(() => expect(railNames()).toEqual(['Notes', 'Settings']));
+    await waitFor(() => expect(railNames()).toEqual(['Home', 'Notes', 'Settings']));
 
     const toggle = await screen.findByLabelText('Connected knowledge');
     await waitFor(() => expect((toggle as HTMLInputElement).disabled).toBe(false));
     fireEvent.click(toggle);
-    await waitFor(() => expect(railNames()).toEqual(['Notes', 'Knowledge', 'Review', 'Ask', 'Settings']));
+    await waitFor(() => expect(railNames()).toEqual(['Home', 'Notes', 'Knowledge', 'Review', 'Ask', 'Settings']));
 
     fireEvent.click(await screen.findByLabelText('Connected knowledge'));
-    await waitFor(() => expect(railNames()).toEqual(['Notes', 'Settings']));
+    await waitFor(() => expect(railNames()).toEqual(['Home', 'Notes', 'Settings']));
   });
 
   it('flags Ask while no provider can answer it, and leads its click to the AI provider page', async () => {

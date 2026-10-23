@@ -6,7 +6,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 
 import type { KvoxDesktopBridge } from '../../src/shared/protocol';
 import { MOCK_NOTE_TEXT, configureAiProvider, openSettingsCard } from '../support/configure-ai';
-import { goTo, railItem } from '../support/rail';
+import { goTo, homeHeading, railItem } from '../support/rail';
 import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support/openai-compatible-mock';
 
 // =============================================================================
@@ -46,7 +46,7 @@ async function launch(): Promise<Page> {
   app.process().stdout?.on('data', (chunk: Buffer) => mainLog.push(...chunk.toString().split('\n').filter(Boolean)));
   app.process().stderr?.on('data', (chunk: Buffer) => mainLog.push(...chunk.toString().split('\n').filter(Boolean)));
   const page = await app.firstWindow();
-  await expect(page.getByRole('heading', { name: 'Notes', level: 1 })).toBeVisible({ timeout: 180_000 });
+  await expect(homeHeading(page)).toBeVisible({ timeout: 180_000 });
   return page;
 }
 
@@ -96,9 +96,9 @@ test('connected knowledge can be switched off and on in Settings, and stays as s
   await expect(toggle).not.toBeChecked();
   await expect(page.getByRole('status').filter({ hasText: 'Connected knowledge is off' })).toBeVisible();
   await expectKnowledgeLinks(page, false);
-  await page.goto(page.url().replace(/#.*$/, '#/ask'));
-  await page.waitForURL(/#\/notes$/);
-  await expect(page.getByRole('heading', { name: 'Notes', level: 1 })).toBeVisible();
+  await page.goto(page.url().split('#')[0] + '#/ask');
+  await page.waitForURL(/#\/$/);
+  await expect(homeHeading(page)).toBeVisible();
 
   const before = provider!.requests.length;
   const refused = await askOnce(page);

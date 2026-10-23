@@ -4,6 +4,7 @@ import {
   buildKvoxUrl,
   createFetchSseConnect,
   unwrapEnvelope,
+  type KvoxFileAccessPort,
   type KvoxHttpMethod,
   type KvoxRequestInit,
   type KvoxResponseWithMeta,
@@ -23,7 +24,9 @@ import type { DesktopConnection } from '../../shared/protocol';
 // envelope; `unwrapEnvelope` (the package's own helper) is applied anyway so a
 // future envelope changes nothing here. Errors become `KvoxApiError` with the
 // body's `message`, `code` and `details`. There is nothing to renew: a 401 is
-// final (`reauthenticate` answers false).
+// final (`reauthenticate` answers false). `files` is the note libraries' file
+// port over the preload bridge (`files.ts`, marinoscar/kvox-desktop#47); the
+// caller creates it once, so it outlives a host rebuilt for the graph switch.
 // =============================================================================
 
 type ErrorBody = { message?: unknown; code?: unknown; details?: unknown; error?: unknown };
@@ -43,7 +46,11 @@ async function toError(response: Response): Promise<KvoxApiError> {
  * Builds the host once per connection and connected-knowledge state (hooks key
  * on its identity, so a new switch value reaches every slice).
  */
-export function createDesktopHost(connection: DesktopConnection, graphEnabled: boolean | undefined): KvoxWebHost {
+export function createDesktopHost(
+  connection: DesktopConnection,
+  graphEnabled: boolean | undefined,
+  files?: KvoxFileAccessPort,
+): KvoxWebHost {
   const api = `${connection.baseUrl}/api`;
   const authorization = (): string => `Bearer ${connection.token}`;
   // Stable objects: the slices read them per render and memoise on them.
@@ -120,5 +127,6 @@ export function createDesktopHost(connection: DesktopConnection, graphEnabled: b
     viewer: () => viewer,
     links: defaultKvoxLinks,
     features: () => features,
+    ...(files ? { files } : {}),
   };
 }

@@ -4,6 +4,7 @@ import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 
 import { KvoxWebHostProvider } from '@marinoscar/kvox-web/core/headless';
+import { kvoxHomeRoutes } from '@marinoscar/kvox-web/home/ui';
 import { KvoxAppShell, renderKvoxRoutes } from '@marinoscar/kvox-web/shell';
 import { PlatformHostProvider } from '@marinoscar/platform-web/core';
 import { LocalIdentityProvider } from '@marinoscar/platform-web/identity/headless';
@@ -11,10 +12,12 @@ import { ShellPreferencesProvider } from '@marinoscar/platform-web/shell/headles
 
 import type { DesktopConnection } from '../../shared/protocol';
 import { AskAvailability } from './askNav';
+import { createDesktopFileAccess } from './files';
 import { createDesktopHost } from './host';
 import { ImportProvider } from './import/ImportProvider';
 import { MenuCommands } from './MenuCommands';
 import { DesktopKnowledgeProvider, useKnowledgeState } from './knowledge';
+import { LibrarySyncController } from './libraries/LibrarySyncController';
 import { desktopKnowledgeRoutes, desktopNotesRoutes } from './routes';
 import { renderDesktopSettingsRoutes } from './settings/routes';
 import { DESKTOP_NAVIGATION, createDesktopPlatformHost, createDesktopShellPreferencesPort, desktopUserMenuItems } from './shell';
@@ -26,8 +29,10 @@ import { DesktopThemeRoot } from './theme';
 //
 //   identity     the local user from the connection (no sign-in, no organization switcher)
 //   preferences  the rail's collapsed state, kept in the shell settings (shell.tsx)
-//   navigation   Notes, Knowledge, Review, Ask and Settings (shell.tsx); the graph rows follow the
-//                connected-knowledge switch, live
+//   navigation   Home, Notes, Knowledge, Review, Ask and Settings (shell.tsx); the graph rows follow the
+//                connected-knowledge switch, live; `/` is the packaged knowledge-first Home
+//   files        the note libraries' file port over IPC (files.ts, marinoscar/kvox-desktop#47), set as
+//                the host's `files`, and the controller that keeps bound libraries in sync
 //   user menu    "Open data folder" and "About KVox"
 //   routes       the slices' route data under the shell, the import (the "Import…" action and a
 //                window-wide drop target, marinoscar/kvox#585) and Settings (the platform's SettingsHub
@@ -48,7 +53,9 @@ const LOADING = (
 export function App({ connection }: { connection: DesktopConnection }): ReactElement {
   const knowledge = useKnowledgeState(connection);
   const { graphEnabled } = knowledge;
-  const host = useMemo(() => createDesktopHost(connection, graphEnabled), [connection, graphEnabled]);
+  // Created once: its watch subscriptions must outlive a host rebuilt for the graph switch.
+  const files = useMemo(() => (window.kvoxDesktop.files ? createDesktopFileAccess(window.kvoxDesktop.files) : undefined), []);
+  const host = useMemo(() => createDesktopHost(connection, graphEnabled, files), [connection, graphEnabled, files]);
   const platformHost = useMemo(() => createDesktopPlatformHost(connection, graphEnabled), [connection, graphEnabled]);
   const preferences = useMemo(() => createDesktopShellPreferencesPort(window.kvoxDesktop), []);
   const userMenuItems = useMemo(() => desktopUserMenuItems(window.kvoxDesktop), []);
@@ -62,20 +69,21 @@ export function App({ connection }: { connection: DesktopConnection }): ReactEle
                 <HashRouter>
                   <ImportProvider>
                     <MenuCommands />
+                    <LibrarySyncController files={files} />
                     <AskAvailability />
                     <Suspense fallback={LOADING}>
                       <Routes>
                         <Route element={<KvoxAppShell navigation={DESKTOP_NAVIGATION} actions={null} userMenuItems={userMenuItems} />}>
-                          {/* The routes wait for the switch, so a knowledge link is not sent to /notes while it loads. */}
+                          {/* The routes wait for the switch, so a knowledge link is not sent to Home while it loads. */}
                           {graphEnabled === undefined ? (
                             <Route path="*" element={LOADING} />
                           ) : (
                             [
-                              <Route key="/" path="/" element={<Navigate to="/notes" replace />} />,
+                              ...renderKvoxRoutes(kvoxHomeRoutes),
                               ...renderKvoxRoutes(desktopNotesRoutes),
                               ...(graphEnabled ? renderKvoxRoutes(desktopKnowledgeRoutes) : []),
                               ...renderDesktopSettingsRoutes(),
-                              <Route key="*" path="*" element={<Navigate to="/notes" replace />} />,
+                              <Route key="*" path="*" element={<Navigate to="/" replace />} />,
                             ]
                           )}
                         </Route>
