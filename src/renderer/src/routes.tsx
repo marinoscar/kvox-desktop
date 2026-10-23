@@ -2,9 +2,9 @@ import { AskEntityButtonSlot, AskEntityPanelSlot, kvoxAskRoutes } from '@marinos
 import type { KvoxRouteDef } from '@marinoscar/kvox-web/core/ui';
 import { GraphEntityPage, graphNotePageSlots, graphNotesLibrarySlots, kvoxGraphRoutes } from '@marinoscar/kvox-web/graph/ui';
 import type { GraphEntityPageSlots } from '@marinoscar/kvox-web/graph/ui';
-import { NewNotePage, NotePage, NotesPage, kvoxNotesRoutes } from '@marinoscar/kvox-web/notes/ui';
+import { NewNotePage, NoteLibrariesPage, NoteLibraryPage, NotePage, NotesPage, kvoxNotesRoutes } from '@marinoscar/kvox-web/notes/ui';
 
-import { ImportButton } from './import/ImportProvider';
+import { DesktopNotesActions } from './import/ImportProvider';
 import { desktopNotesAiAccess } from './notesAi';
 
 // =============================================================================
@@ -15,9 +15,13 @@ import { desktopNotesAiAccess } from './notesAi';
 // decides which pages are wrapped.
 // The pages that take an `ai` prop or slots are wrapped (the web edition's
 // apps/web/src/kvox/notesRoutes.ts and graphRoutes.ts do the same), and the
-// library gets the "Import…" action beside "New note" (marinoscar/kvox#585);
-// paths, permissions and order are the slices'. The slots are the slices' own
-// ready-made fillers (marinoscar/kvox#586):
+// library gets the "Import…" action beside "New note" (marinoscar/kvox#585),
+// with the package's "Libraries" link next to it; paths, permissions and order
+// are the slices'. The note library pages (marinoscar/kvox-desktop#47) upload
+// one file at a time (`sequential`: the main process reads them from disk); the
+// import batch page and the graph's Review Queue are the slices' own routes,
+// mounted as they come. The slots are the slices' own ready-made fillers
+// (marinoscar/kvox#586):
 //
 //   note page       graphNotePageSlots: the review sheet over the note's
 //                   proposal, "Add to graph" on a selection, the extract dialog
@@ -25,7 +29,9 @@ import { desktopNotesAiAccess } from './notesAi';
 //   entity page     the ask slice's Ask action and panel
 // =============================================================================
 
-const NotesPageWithImport = () => <NotesPage secondaryAction={<ImportButton />} slots={graphNotesLibrarySlots} />;
+const NotesPageWithImport = () => <NotesPage secondaryAction={<DesktopNotesActions />} slots={graphNotesLibrarySlots} />;
+const NoteLibrariesPageSequential = () => <NoteLibrariesPage sequential />;
+const NoteLibraryPageSequential = () => <NoteLibraryPage sequential />;
 const NewNotePageWithAi = () => <NewNotePage ai={desktopNotesAiAccess} />;
 const NotePageWithSlots = () => <NotePage ai={desktopNotesAiAccess} slots={graphNotePageSlots} />;
 const entitySlots: GraphEntityPageSlots = { AskButton: AskEntityButtonSlot, AskPanel: AskEntityPanelSlot };
@@ -38,11 +44,13 @@ export const desktopNotesRoutes: readonly KvoxRouteDef[] = kvoxNotesRoutes
   .map((route) => {
     if (route.path === '/notes') return { ...route, Component: NotesPageWithImport };
     if (route.path === '/notes/new') return { ...route, Component: NewNotePageWithAi };
+    if (route.path === '/notes/libraries') return { ...route, Component: NoteLibrariesPageSequential };
+    if (route.path === '/notes/libraries/:libraryId') return { ...route, Component: NoteLibraryPageSequential };
     if (route.path === '/notes/:id') return { ...route, Component: NotePageWithSlots };
     return route;
   });
 
-/** The graph routes (Knowledge, the explorer, the overview, Review, imports) and Ask's. */
+/** The graph routes (Knowledge, the explorer, the overview, Review, the Review Queue, imports) and Ask's. */
 export const desktopKnowledgeRoutes: readonly KvoxRouteDef[] = [
   ...kvoxGraphRoutes.map((route) => (route.path === '/graph/entities/:id' ? { ...route, Component: GraphEntityPageWithAsk } : route)),
   ...kvoxAskRoutes,

@@ -99,13 +99,106 @@ export interface UpdateStatus {
 }
 
 /**
- * What one file import produced (marinoscar/kvox#585): a note (a KVox note export), a
- * transcript (a transcript JSON export) or a note source document (PDF, Markdown,
- * text), or the server's refusal in words a person can read.
+ * What one file import produced (marinoscar/kvox#585, marinoscar/kvox-desktop#47): a note (a KVox note
+ * export), a transcript (a transcript JSON export), or the ad-hoc import batch the note documents (Markdown,
+ * text, PDF, Word, PowerPoint) went into (`id` is the batch id), or the server's refusal in words a person
+ * can read. `document` (a note source document) is what an older server answered; it is kept for that.
  */
 export type ImportOutcome =
-  | { ok: true; kind: 'note' | 'transcript' | 'document'; id: string; title: string; filename: string }
+  | { ok: true; kind: 'note' | 'transcript' | 'document' | 'batch'; id: string; title: string; filename: string }
   | { ok: false; filename: string; message: string; reason?: string; status?: number };
+
+// =============================================================================
+// The file-access port over IPC (marinoscar/kvox-desktop#47)
+// =============================================================================
+//
+// The renderer's `KvoxFileAccessPort` (`src/renderer/src/files.ts`) is a thin
+// client of these channels; the main process (`src/main/files/`) owns the
+// folders. A folder crosses IPC as an opaque `{ id, name }`, every path as
+// POSIX relative to it: the renderer never receives an absolute path.
+// =============================================================================
+
+/** The invoke channels of the file port, and the one event channel (`changed`, main -> renderer). */
+export const FILES_CHANNELS = {
+  pickFolder: 'files:pick-folder',
+  listFolders: 'files:list-folders',
+  forgetFolder: 'files:forget-folder',
+  enumerate: 'files:enumerate',
+  enumerateNext: 'files:enumerate-next',
+  enumerateCancel: 'files:enumerate-cancel',
+  hash: 'files:hash',
+  read: 'files:read',
+  getLibraryFolder: 'files:get-library-folder',
+  setLibraryFolder: 'files:set-library-folder',
+  watch: 'files:watch',
+  unwatch: 'files:unwatch',
+  changed: 'files:changed',
+} as const;
+
+/** The largest file `files:read` hands the renderer: 25 MiB, the server's default document limit. */
+export const FILES_MAX_READ_BYTES = 25 * 1024 * 1024;
+
+/** How many entries one `files:enumerate-next` page carries at most. */
+export const FILES_ENUMERATE_PAGE_SIZE = 500;
+
+/** Why a file call failed: the port's own codes, plus `too_large` for a read over {@link FILES_MAX_READ_BYTES}. */
+export type FilesErrorCode = 'permission_denied' | 'unknown_folder' | 'not_found' | 'unsupported' | 'too_large';
+
+/** Every file call answers this envelope (an `ipcMain.handle` throw would lose the code). */
+export type FilesResult<T> = { ok: true; value: T } | { ok: false; code: FilesErrorCode; message: string };
+
+/** A folder as the renderer sees it: an opaque id and the folder's last path segment. */
+export interface FilesFolderRef {
+  id: string;
+  name: string;
+}
+
+/** One file of a folder: POSIX path relative to the folder, size, last modified (ms since the epoch). */
+export interface FilesEntry {
+  path: string;
+  size: number;
+  mtime: number;
+}
+
+/** One page of a walk. */
+export interface FilesEnumeratePage {
+  entries: FilesEntry[];
+  /** No page follows; the cursor is released. */
+  done: boolean;
+}
+
+/** `files:changed`: relative paths that changed in a watched folder (debounced in main). */
+export interface FilesChangedEvent {
+  folderId: string;
+  paths: string[];
+}
+
+/** The file port's half of the bridge (`window.kvoxDesktop.files`). */
+export interface KvoxDesktopFilesBridge {
+  /** The native folder dialog; `null` when cancelled. Picking a known folder again answers its ref. */
+  pickFolder(): Promise<FilesResult<FilesFolderRef | null>>;
+  listFolders(): Promise<FilesResult<FilesFolderRef[]>>;
+  /** Forgets a folder and every library binding to it (the files are untouched). */
+  forgetFolder(folderId: string): Promise<FilesResult<null>>;
+  /** Starts a walk; read it with `enumerateNext` until `done`. */
+  enumerate(folderId: string, extensions: readonly string[]): Promise<FilesResult<{ cursor: string }>>;
+  enumerateNext(cursor: string): Promise<FilesResult<FilesEnumeratePage>>;
+  /** Stops a walk early and releases its cursor. */
+  enumerateCancel(cursor: string): Promise<void>;
+  /** The lower-case hex SHA-256 of one file, streamed in main. */
+  hash(folderId: string, path: string): Promise<FilesResult<string>>;
+  /** One file's bytes (at most {@link FILES_MAX_READ_BYTES}). */
+  read(folderId: string, path: string): Promise<FilesResult<ArrayBuffer>>;
+  getLibraryFolder(libraryId: string): Promise<FilesResult<FilesFolderRef | null>>;
+  /** Binds a library to a folder on this device; `null` unbinds it. */
+  setLibraryFolder(libraryId: string, folderId: string | null): Promise<FilesResult<null>>;
+  /** Starts watching a folder (idempotent); changes arrive on `onChanged`. */
+  watch(folderId: string): Promise<FilesResult<null>>;
+  /** Stops watching a folder (idempotent). */
+  unwatch(folderId: string): Promise<void>;
+  /** Subscribes to `files:changed`; returns the unsubscribe. */
+  onChanged(handler: (event: FilesChangedEvent) => void): () => void;
+}
 
 /** The theme choice: a mode, or `system` to follow the OS (the shell's `ShellThemeMode`, restricted to the built-in three). */
 export type ThemeMode = 'light' | 'dark' | 'system';
@@ -187,4 +280,6 @@ export interface KvoxDesktopBridge {
   onMenuToggleTheme(handler: () => void): () => void;
   /** The application menu asked for the import dialog; returns the unsubscribe. */
   onMenuImport(handler: () => void): () => void;
+  /** The file-access port's channels (note libraries, marinoscar/kvox-desktop#47). */
+  files: KvoxDesktopFilesBridge;
 }

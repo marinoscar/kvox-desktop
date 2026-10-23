@@ -1,11 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-import { MENU_CHANNELS, type KvoxDesktopBridge } from '../shared/protocol';
+import { FILES_CHANNELS, MENU_CHANNELS, type FilesChangedEvent, type KvoxDesktopBridge, type KvoxDesktopFilesBridge } from '../shared/protocol';
 
 // The renderer's one door to the shell: where the local server listens and the
 // per-launch token, the native backup dialogs, the secret-storage status, the
 // import (the dialog, and the paths of files dropped on the window) and the
-// opt-in updates, the theme choice (kept so the window is painted in it on the next launch), the shell's preferences (the rail), the two user-menu commands (data folder, About), and the three commands the application menu sends (the page
+// opt-in updates, the note libraries' file port (`files`), the theme choice (kept so the window is painted in it on the next launch), the shell's preferences (the rail), the two user-menu commands (data folder, About), and the three commands the application menu sends (the page
 // gets the payload, never the IPC event).
 // Nothing else of Node or Electron reaches the page.
 function subscribe(channel: string, handler: (payload: unknown) => void): () => void {
@@ -15,6 +15,24 @@ function subscribe(channel: string, handler: (payload: unknown) => void): () => 
     ipcRenderer.removeListener(channel, listener);
   };
 }
+
+// The note libraries' file port (marinoscar/kvox-desktop#47). Folders are opaque ids; the main process
+// validates every argument again and never answers an absolute path.
+const files: KvoxDesktopFilesBridge = {
+  pickFolder: () => ipcRenderer.invoke(FILES_CHANNELS.pickFolder),
+  listFolders: () => ipcRenderer.invoke(FILES_CHANNELS.listFolders),
+  forgetFolder: (folderId) => ipcRenderer.invoke(FILES_CHANNELS.forgetFolder, folderId),
+  enumerate: (folderId, extensions) => ipcRenderer.invoke(FILES_CHANNELS.enumerate, folderId, Array.from(extensions)),
+  enumerateNext: (cursor) => ipcRenderer.invoke(FILES_CHANNELS.enumerateNext, cursor),
+  enumerateCancel: (cursor) => ipcRenderer.invoke(FILES_CHANNELS.enumerateCancel, cursor),
+  hash: (folderId, path) => ipcRenderer.invoke(FILES_CHANNELS.hash, folderId, path),
+  read: (folderId, path) => ipcRenderer.invoke(FILES_CHANNELS.read, folderId, path),
+  getLibraryFolder: (libraryId) => ipcRenderer.invoke(FILES_CHANNELS.getLibraryFolder, libraryId),
+  setLibraryFolder: (libraryId, folderId) => ipcRenderer.invoke(FILES_CHANNELS.setLibraryFolder, libraryId, folderId),
+  watch: (folderId) => ipcRenderer.invoke(FILES_CHANNELS.watch, folderId),
+  unwatch: (folderId) => ipcRenderer.invoke(FILES_CHANNELS.unwatch, folderId),
+  onChanged: (handler) => subscribe(FILES_CHANNELS.changed, (payload) => handler(payload as FilesChangedEvent)),
+};
 
 const bridge: KvoxDesktopBridge = {
   connection: () => ipcRenderer.invoke('kvox:connection'),
@@ -44,6 +62,7 @@ const bridge: KvoxDesktopBridge = {
   onMenuNavigate: (handler) => subscribe(MENU_CHANNELS.navigate, (payload) => handler(payload)),
   onMenuToggleTheme: (handler) => subscribe(MENU_CHANNELS.toggleTheme, () => handler()),
   onMenuImport: (handler) => subscribe(MENU_CHANNELS.importFiles, () => handler()),
+  files,
 };
 
 contextBridge.exposeInMainWorld('kvoxDesktop', bridge);

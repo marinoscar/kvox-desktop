@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { importLocalFile } from '../../src/main/import-file';
+import { importLocalFile, importLocalFiles } from '../../src/main/import-file';
 import { startServer, type RunningServer } from '../../src/server/bootstrap';
 import { spawnNodeScript } from '../../src/server/database';
 import type { DesktopConnection, ImportOutcome } from '../../src/shared/protocol';
@@ -19,8 +19,10 @@ import { ROOT, fakeCipher, removeQuietly } from './support/database';
 // slice), and the main process's `importLocalFile` against it, once per input
 // kind, with the synthetic fixtures of tests/fixtures/import:
 //
-//   - a PDF transcript and a Markdown file become note source documents whose
-//     text is extracted (the job runner reads them);
+//   - note documents (a PDF transcript, Markdown, text) go into ONE ad-hoc
+//     import batch (marinoscar/kvox-desktop#47) and each becomes a note (the
+//     batch's job reads them); a drop that mixes kinds still sends the
+//     transcript JSON to its own route;
 //   - a `kvox.transcript/v1` JSON keeps its named speakers and `recordedAt`;
 //   - a note exported from KVox web imports with the same title and body, and
 //     exports back to them (round trip);
@@ -50,14 +52,22 @@ async function importFixture(name: string): Promise<ImportOutcome> {
   return importLocalFile(join(FIXTURES, name), { connection, log: (line) => logged.push(line) });
 }
 
-async function waitForExtraction(objectId: string): Promise<{ status: string; characters: number | null }> {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    // The notes slice's own status route (owner-scoped, notes:read).
-    const extraction = await api<{ status: string; characters: number | null }>(`/notes/sources/documents/${objectId}`);
-    if (extraction.status !== 'extracting') return extraction;
+interface BatchItem {
+  filename: string;
+  path: string | null;
+  status: string;
+  noteId: string | null;
+  failureMessage: string | null;
+}
+
+/** The items of an import batch once none is queued or importing (the notes slice's own routes). */
+async function waitForBatch(batchId: string): Promise<BatchItem[]> {
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    const { items } = await api<{ items: BatchItem[] }>(`/notes/import-batches/${batchId}/items?limit=200`);
+    if (items.length > 0 && items.every((item) => item.status !== 'queued' && item.status !== 'importing')) return items;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error(`extraction of ${objectId} did not finish`);
+  throw new Error(`batch ${batchId} did not settle`);
 }
 
 /** Exports a note in `format` through the notes slice and returns the downloaded file's bytes. */
@@ -108,22 +118,30 @@ afterAll(async () => {
 });
 
 describe('importLocalFile against the Desktop server', () => {
-  it('imports a PDF transcript as a note source and reads its text', async () => {
+  it('imports a PDF transcript into an import batch, as a note with its text', async () => {
     const outcome = await importFixture('roadmap-sync-transcript.pdf');
 
-    expect(outcome).toMatchObject({ ok: true, kind: 'document', title: 'roadmap-sync-transcript.pdf' });
+    expect(outcome).toMatchObject({ ok: true, kind: 'batch', filename: 'roadmap-sync-transcript.pdf' });
     if (!outcome.ok) return;
-    const extraction = await waitForExtraction(outcome.id);
-    expect(extraction.status).toBe('extracted');
-    expect(extraction.characters).toBeGreaterThan(100);
+    const [item] = await waitForBatch(outcome.id);
+    expect(item).toMatchObject({ filename: 'roadmap-sync-transcript.pdf', path: 'roadmap-sync-transcript.pdf', status: 'imported' });
+    const note = await api<{ body: string }>(`/notes/${item!.noteId}`);
+    expect(note.body.length).toBeGreaterThan(100);
   });
 
-  it('imports Markdown and text as a note source', async () => {
-    const outcome = await importFixture('standup.md');
+  it('imports several documents as ONE batch, and a transcript JSON beside them to its own route', async () => {
+    const outcomes = await importLocalFiles(
+      ['standup.md', 'roadmap-sync-transcript.pdf', 'm03-roadmap-sync.transcript.json'].map((name) => join(FIXTURES, name)),
+      { connection, log: (line) => logged.push(line) },
+    );
 
-    expect(outcome).toMatchObject({ ok: true, kind: 'document' });
-    if (!outcome.ok) return;
-    expect((await waitForExtraction(outcome.id)).status).toBe('extracted');
+    expect(outcomes).toHaveLength(2);
+    expect(outcomes[0]).toMatchObject({ ok: true, kind: 'batch', title: '2 documents' });
+    expect(outcomes[1]).toMatchObject({ ok: true, kind: 'transcript' });
+    if (!outcomes[0]!.ok) return;
+    const items = await waitForBatch(outcomes[0]!.id);
+    expect(items.map((item) => item.filename).sort()).toEqual(['roadmap-sync-transcript.pdf', 'standup.md']);
+    expect(items.every((item) => item.status === 'imported' && item.noteId !== null)).toBe(true);
   });
 
   it('imports a transcript JSON with its named speakers and its recording date', async () => {

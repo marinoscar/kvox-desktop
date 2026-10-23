@@ -39,11 +39,12 @@ declare module '@marinoscar/platform-web/settings/headless' {
 registerSettingsFeature('graph', () => useDesktopKnowledge().graphEnabled === true);
 
 /**
- * The rows: Notes, Knowledge, Review, Ask and Settings pinned at the foot. Templates is a Settings card
+ * The rows: Home (the knowledge-first Home at `/`, marinoscar/kvox-desktop#47), Notes, Knowledge, Review, Ask
+ * and Settings pinned at the foot. Templates is a Settings card
  * (`/settings/note-templates`), not a destination, so it is not listed. Declared once: the shell keys on it.
  */
 const { navigation: KVOX_NAVIGATION } = createKvoxNavigation({
-  include: ['notes', 'graph', 'review', 'ask'],
+  include: ['home', 'notes', 'graph', 'review', 'ask'],
   settingsPath: DESKTOP_SETTINGS_PATH,
   settingsSections: DESKTOP_SETTINGS_SECTIONS,
 });

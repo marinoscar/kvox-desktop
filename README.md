@@ -46,11 +46,11 @@ flowchart LR
   Ai -- "allowlist: AI provider only" --> Cloud[(OpenAI or compatible)]
 ```
 
-**The renderer shell.** The window around every screen is `KvoxAppShell` from `@marinoscar/kvox-web/shell`, the component KVox web renders: a left rail of icons and labels (Notes, Knowledge, Review, Ask; Settings pinned at the foot; collapsible), an app bar with the KVox mark and name, the light/dark toggle and a user menu, and a bottom bar under 600 px. Desktop defines none of it. The bindings live in `src/renderer/src/App.tsx` (the providers and the routes) and `src/renderer/src/shell.tsx`:
+**The renderer shell.** The window around every screen is `KvoxAppShell` from `@marinoscar/kvox-web/shell`, the component KVox web renders: a left rail of icons and labels (Home, Notes, Knowledge, Review, Ask; Settings pinned at the foot; collapsible), an app bar with the KVox mark and name, the light/dark toggle and a user menu, and a bottom bar under 600 px. Desktop defines none of it. The bindings live in `src/renderer/src/App.tsx` (the providers and the routes) and `src/renderer/src/shell.tsx`:
 
 - **Identity.** `LocalIdentityProvider` and a `PlatformHostProvider` from the connection (`userId`, `permissions`; the display name is the operating-system user name, else "You"). There is no sign-in, sign-out or organization switcher, and the shell makes no request to a platform API: the host's API is a stub that rejects (`tests/unit/shell.test.tsx` asserts that nothing but the local server's routes is called).
 - **Rail preference.** `ShellPreferencesProvider` over the shell settings: `shell.railCollapsed` in `<userData>/settings.json`, read and written through the preload bridge (`shellPreferences`, `setShellPreferences`), so it survives a restart.
-- **Navigation.** `createKvoxNavigation({ include: ['notes', 'graph', 'review', 'ask'], settingsPath: '/settings', settingsSections })`. Templates is a Settings card, not a row. Knowledge, Review and Ask carry the `graph` feature, registered with `registerSettingsFeature('graph', ...)` over the connected-knowledge switch, so turning it on in Settings shows them without a restart.
+- **Navigation.** `createKvoxNavigation({ include: ['home', 'notes', 'graph', 'review', 'ask'], settingsPath: '/settings', settingsSections })`. The window opens on Home: `/` is the package's knowledge-first Home (`kvoxHomeRoutes` of `@marinoscar/kvox-web/home/ui`), and an unknown path leads there too. Templates is a Settings card, not a row. Knowledge, Review and Ask carry the `graph` feature, registered with `registerSettingsFeature('graph', ...)` over the connected-knowledge switch, so turning it on in Settings shows them without a restart.
 - **User menu.** "Open data folder" and "About KVox" run the same actions as the application menu's Help items (`openDataFolder`, `showAbout` on the bridge).
 - **Routes and links.** `renderKvoxRoutes`, `defaultKvoxLinks` and `AiKeyRequired` are the package's; Desktop keeps only which pages it wraps (`routes.tsx`). No breakpoint is read here: the five gates are the platform's.
 
@@ -84,7 +84,7 @@ Everything KVox keeps lives there, and nowhere else ([ADR-0004](https://github.c
 | `vault/<key>` | The bytes of every document and stored object, one file per object. Files appear whole (written elsewhere, then renamed) |
 | `logs/audit.log` | Append-only JSON lines: who, what, which id, counts. Never titles, text or file names |
 | `secrets.bin` | Saved API keys, each an Electron `safeStorage` blob (OS keychain, DPAPI or Secret Service) |
-| `settings.json` | The shell's own preferences: the plaintext-keys consent below, and "Check for updates" (off unless you turn it on) |
+| `settings.json` | The shell's own preferences: the plaintext-keys consent below, "Check for updates" (off unless you turn it on), and the folders you chose for note libraries with each library's folder on this device (`files`; see [Note libraries](#note-libraries)) |
 | `tmp/` | Scratch files and upload parts; emptied at every start |
 | `models/` | Only if you turn on on-device search: the embedding model (`models/bge-small-en-v1.5-int8/`, about 33 MB), downloaded once after your consent. Never in a backup; delete it from Settings or by hand and it is simply downloaded again (see [Network and privacy: on-device search](#network-and-privacy-on-device-search)) |
 | `copilot/` | Only if you choose GitHub Copilot: its private state (`home/`: sessions and sign-in material, `work/`: an empty working directory) and the downloaded runtime (`runtime/<version>/`). Never in a backup (see [Network and privacy: GitHub Copilot](#network-and-privacy-github-copilot)) |
@@ -161,15 +161,23 @@ Both run as background jobs. The `copilot/` folder, saved API keys, `settings.js
 
 ## Importing
 
-Notes > **Import…** opens the system file dialog; dropping files anywhere on the window does the same. KVox reads each file in the main process and sends it to the local server (never anywhere else):
+Notes > **Import…** (or File > Import…) opens the system file dialog; dropping files anywhere on the window does the same. KVox reads each file in the main process and sends it to the local server (never anywhere else), at most 2000 files at a time; note documents stream into one import batch (`POST /api/notes/import-batches`, then each file to `/:id/files`), the calls kvox-web's `importFilesAdHoc` makes from a browser:
 
 | You import | KVox creates | Then |
 |---|---|---|
-| A PDF transcript, a Markdown or a text file | A note source document; its text is extracted | "New note" opens with the document chosen: pick a template and generate |
+| Markdown, text, PDF, Word (`.docx`) or PowerPoint (`.pptx`) files, one or many | One import batch; each file becomes a note | The batch's progress page opens (`/notes/import-batches/:id`) |
 | A transcript exported from KVox web as JSON (`kvox.transcript/v1`) | A transcript, with its speaker names and recording date | "New note" opens with the transcript chosen |
 | A note exported from KVox web as Markdown | The same note (same title and body), ready to edit | The note opens |
 
 The file's content decides, not its name (`detectKvoxImport` in `@marinoscar/kvox-contract/notes`); the formats are read by the packages, never here. A file KVox cannot use (audio, video, a foreign JSON) gets the server's own explanation. Size limits are the slices': 5 MiB for a note, 25 MiB for a transcript, `ai.maxDocumentBytes` (10 MiB) for a document. There is no transcription: audio and video are refused.
+
+## Note libraries
+
+A note library is a folder of your own documents (Markdown, text, PDF, Word, PowerPoint) kept in sync with your notes (marinoscar/kvox-desktop#47, epic marinoscar/kvox#708). The pages are the package's (Notes > **Libraries**, `/notes/libraries`, `/notes/libraries/:id`, and the batch page); the sync is kvox-web's `runLibrarySync`. Desktop supplies the file port (`KvoxWebHost.files`) and keeps bound libraries in sync:
+
+- **The file port** (`src/renderer/src/files.ts` over the preload's `files` bridge, `src/main/files/` in the main process). **Add folder** opens the system folder dialog. A folder is remembered in `settings.json` as a random id with its path and name, with each library's folder beside it; the window only ever sees the id and the folder's name, never a path on disk. The walk skips hidden entries, `node_modules` and symbolic links and keeps the importable extensions; hashing is a streamed SHA-256 in the main process; a read is capped at 25 MiB. Every path the window sends must stay inside the folder (also after resolving links), or the call is refused.
+- **Kept in sync.** At launch every library with a folder on this device is synced, and the folder is watched (`fs.watch`, recursive; changes are batched for 2 seconds), so a file you add, change or remove is picked up without asking. These syncs do not ask for confirmation (you chose the folder); **Add folder** and **Sync now** on the library pages still do. One sync runs at a time; a small notice at the bottom left says "Syncing notes… 12/40" and links to the import when it is done.
+- **Per device.** The binding is not sent to the server and `settings.json` is not in a backup: after a restore or on another machine, choose the folder again.
 
 ## Knowledge graph and asking questions
 
@@ -178,7 +186,7 @@ The graph, graph-extraction, graph-rdf and Ask slices of `@marinoscar/kvox-api` 
 | Bar item | Screen | What you do there |
 |---|---|---|
 | **Knowledge** | The graph index, an entity page, the explorer, the overview | Browse people, organizations and meetings; on a person, **Set manager**, **Set employer** or **Add role**, and remove a wrong one |
-| **Review** | The proposals waiting for review | Open a note's proposal, accept or reject rows, **Send to graph** |
+| **Review** | The proposals waiting for review, and the Review Queue (`/graph/review-queue`, grouped by library and import) | Open a note's proposal, accept or reject rows, **Send to graph** |
 | **Ask** | Conversations | Ask a question; the answer cites the meetings and facts it used |
 
 How facts get in:
@@ -296,7 +304,7 @@ tests/unit/      Vitest: the ports conformance kit, jobs (timeouts, back-off, a 
 tests/crash/     The child process the crash-recovery test kills
 tests/unit/import.test.ts  every import kind against the real local server
 tests/e2e/       Playwright for Electron (smoke, window egress and settings, import by dialog and drag and drop, opt-in updates,
-                 the graph and the Ask reference questions)
+                 the graph and the Ask reference questions; note libraries, skipped until the packages carry them)
 tests/support/   The OpenAI-compatible loopback mock and its scripted model (the package's scenario model)
 tests/fixtures/  Synthetic fixtures: import (a PDF transcript, a transcript JSON, a note export) and graph (three meetings)
 ```

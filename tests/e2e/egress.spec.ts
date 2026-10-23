@@ -6,6 +6,7 @@ import { _electron as electron, expect, test, type ElectronApplication } from '@
 
 import type { KvoxDesktopBridge } from '../../src/shared/protocol';
 import { openSettingsCard } from '../support/configure-ai';
+import { homeHeading } from '../support/rail';
 
 // =============================================================================
 // The window cannot reach the internet; the server's guard is on (marinoscar/kvox#583)
@@ -42,7 +43,7 @@ test('a request to a non-allowlisted host is blocked in the window and logged wi
   app.process().stdout?.on('data', (chunk: Buffer) => mainLog.push(...chunk.toString().split('\n').filter(Boolean)));
   app.process().stderr?.on('data', (chunk: Buffer) => mainLog.push(...chunk.toString().split('\n').filter(Boolean)));
   const page = await app.firstWindow();
-  await expect(page.getByRole('heading', { name: 'Notes', level: 1 })).toBeVisible({ timeout: 180_000 });
+  await expect(homeHeading(page)).toBeVisible({ timeout: 180_000 });
 
   const outcome = await page.evaluate(() =>
     fetch('https://example.com/private/path?token=secret').then(

@@ -27,8 +27,8 @@ export function rail(page: Page): Locator {
   return page.getByRole('navigation', { name: 'Main navigation' });
 }
 
-/** One destination of the rail: Notes, Knowledge, Review, Ask or Settings. */
-export function railItem(page: Page, name: 'Notes' | 'Knowledge' | 'Review' | 'Ask' | 'Settings'): Locator {
+/** One destination of the rail: Home, Notes, Knowledge, Review, Ask or Settings. */
+export function railItem(page: Page, name: 'Home' | 'Notes' | 'Knowledge' | 'Review' | 'Ask' | 'Settings'): Locator {
   return rail(page).getByRole('link', { name, exact: true });
 }
 
@@ -50,4 +50,12 @@ export function userMenuButton(page: Page): Locator {
 /** Waits for the rail to show exactly these destinations. */
 export async function expectRail(page: Page, names: string[]): Promise<void> {
   await expect.poll(() => railDestinations(page)).toEqual(names);
+}
+
+/**
+ * The packaged Home's greeting ("Hi, <name>" or "Hi there"), the window's first page since Desktop opens on Home
+ * (marinoscar/kvox-desktop#47).
+ */
+export function homeHeading(page: Page): Locator {
+  return page.getByRole('heading', { level: 1, name: /^Hi\b/ });
 }
