@@ -69,7 +69,7 @@ test('a folder added as a library imports, re-syncs on a change, and is remember
   }, folder);
   await page.getByRole('link', { name: 'Libraries' }).click();
   await page.waitForURL(/#\/notes\/libraries$/);
-  await page.getByRole('button', { name: 'Add folder' }).click();
+  await page.getByRole('button', { name: /^Add (your notes )?folder$/ }).click();
   await page.getByRole('button', { name: 'Start import' }).click();
   await page.waitForURL(/#\/notes\/import-batches\/[^/?]+$/);
   await expect(page.getByText('standup.md').first()).toBeVisible();
@@ -88,7 +88,7 @@ test('a folder added as a library imports, re-syncs on a change, and is remember
   app = await launch();
   page = await app.firstWindow();
   await expect(homeHeading(page)).toBeVisible({ timeout: 180_000 });
-  await page.goto(page.url().replace(/#.*$/, '#/notes/libraries'));
+  await page.goto(page.url().split('#')[0] + '#/notes/libraries');
   await expect(page.getByText(/Notes|kvox-e2e-library-folder/).first()).toBeVisible();
 
   // ---- No egress ---------------------------------------------------------------

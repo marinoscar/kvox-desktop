@@ -98,7 +98,7 @@ test('every input kind imports from the dialog or by drag and drop, with no egre
   await expect(page.getByText('roadmap-sync-transcript.pdf').first()).toBeVisible();
 
   // ---- Transcript JSON, from the dialog: speakers and date kept, then a note --
-  await page.goto(page.url().replace(/#.*$/, '#/notes'));
+  await page.goto(page.url().split('#')[0] + '#/notes');
   await answerDialogWith(app, [join(FIXTURES, 'm03-roadmap-sync.transcript.json')]);
   await page.getByRole('button', { name: 'Import…' }).click();
   await page.waitForURL(/#\/notes\/new\?transcriptId=/);
@@ -113,7 +113,7 @@ test('every input kind imports from the dialog or by drag and drop, with no egre
 
   // ---- Note export, dropped on the window: same title and body ---------------
   const expected = JSON.parse(readFileSync(join(FIXTURES, 'planning-sync-note.expected.json'), 'utf8')) as { title: string; body: string };
-  await page.goto(page.url().replace(/#.*$/, '#/notes'));
+  await page.goto(page.url().split('#')[0] + '#/notes');
   await expect(page.getByRole('heading', { name: 'Notes', level: 1 })).toBeVisible();
   await dropFiles(app, page, [join(FIXTURES, 'planning-sync-note.md')]);
   await page.waitForURL(/#\/notes\/[0-9a-f-]{36}$/);
@@ -129,7 +129,7 @@ test('every input kind imports from the dialog or by drag and drop, with no egre
   await expect(page.getByText('standup.md').first()).toBeVisible();
 
   // ---- A foreign JSON: the slice's own refusal, nothing opened ---------------
-  await page.goto(page.url().replace(/#.*$/, '#/notes'));
+  await page.goto(page.url().split('#')[0] + '#/notes');
   await answerDialogWith(app, [join(FIXTURES, 'foreign.json')]);
   await page.getByRole('button', { name: 'Import…' }).click();
   await expect(page.getByTestId('import-error')).toBeVisible();

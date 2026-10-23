@@ -63,7 +63,8 @@ async function launch(): Promise<{ app: ElectronApplication; page: Page }> {
   app.context().on('request', (request) => requests.push(request.url()));
   const page = await app.firstWindow();
   // The window opens on Home (marinoscar/kvox-desktop#47).
-  await page.waitForURL(/#\/$/, { timeout: 180_000 });
+  // HashRouter leaves the first URL without a hash (index.html) until something navigates.
+  await page.waitForURL(/index\.html(#\/)?$/, { timeout: 180_000 });
   await expect(homeHeading(page)).toBeVisible({ timeout: 180_000 });
   return { app, page };
 }

@@ -268,7 +268,7 @@ test('the reference questions are answered with citations, and a manager set by 
   expect(before.content).not.toContain(MEETINGS[2].title);
 
   // ---- Set her manager by hand on her entity page ---------------------------
-  await page.goto(page.url().replace(/#.*$/, `#/graph/entities/${person.get('Priya Shah')}`));
+  await page.goto(page.url().split('#')[0] + `#/graph/entities/${person.get('Priya Shah')}`);
   await expect(page.getByRole('heading', { name: 'Priya Shah', level: 1 })).toBeVisible();
   await page.getByRole('button', { name: 'Set manager' }).click();
   const dialog = page.getByRole('dialog', { name: 'Set manager' });

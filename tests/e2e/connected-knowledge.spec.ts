@@ -96,7 +96,7 @@ test('connected knowledge can be switched off and on in Settings, and stays as s
   await expect(toggle).not.toBeChecked();
   await expect(page.getByRole('status').filter({ hasText: 'Connected knowledge is off' })).toBeVisible();
   await expectKnowledgeLinks(page, false);
-  await page.goto(page.url().replace(/#.*$/, '#/ask'));
+  await page.goto(page.url().split('#')[0] + '#/ask');
   await page.waitForURL(/#\/$/);
   await expect(homeHeading(page)).toBeVisible();
 
