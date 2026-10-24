@@ -146,7 +146,9 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   expect(await page.evaluate(() => getComputedStyle(document.body).fontFamily)).toMatch(/^"?Inter"?,/);
   expect(await page.evaluate(() => document.fonts.load('16px Inter').then(() => document.fonts.check('16px Inter')))).toBe(true);
   const newNote = page.getByRole('button', { name: 'New note' }).filter({ visible: true }).first();
-  expect(await newNote.evaluate((el) => getComputedStyle(el).textTransform)).toBe('none');
+  // Polled: right after launch the button can be read before its styles are attached (computed value "").
+  await expect(newNote).toBeVisible();
+  await expect.poll(() => newNote.evaluate((el) => getComputedStyle(el).textTransform)).toBe('none');
 
   // System follows the OS.
   await page.emulateMedia({ colorScheme: 'light' });
