@@ -146,7 +146,9 @@ test('a note generated from a Markdown file survives a restart, with no egress',
   expect(await page.evaluate(() => getComputedStyle(document.body).fontFamily)).toMatch(/^"?Inter"?,/);
   expect(await page.evaluate(() => document.fonts.load('16px Inter').then(() => document.fonts.check('16px Inter')))).toBe(true);
   const newNote = page.getByRole('button', { name: 'New note' }).filter({ visible: true }).first();
-  expect(await newNote.evaluate((el) => getComputedStyle(el).textTransform)).toBe('none');
+  // Polled: right after launch the button can be read before its styles are attached (computed value "").
+  await expect(newNote).toBeVisible();
+  await expect.poll(() => newNote.evaluate((el) => getComputedStyle(el).textTransform)).toBe('none');
 
   // System follows the OS.
   await page.emulateMedia({ colorScheme: 'light' });
@@ -266,6 +268,8 @@ test('a note generated from a Markdown file survives a restart, with no egress',
     mimeType: 'text/markdown',
     buffer: Buffer.from('# Stand-up\n\nJoe will send the budget by Friday.\nJenny reviews the plan.\n'),
   });
+  // A picked document is kept as a note by default; this test generates one from a template.
+  await page.getByRole('radio', { name: /Rewrite it with a template/ }).check();
   await expect(page.getByText('Document read')).toBeVisible();
   await page.getByRole('button', { name: 'Generate' }).click();
 

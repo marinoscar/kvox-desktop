@@ -175,7 +175,7 @@ export function ImportProvider({ children }: { children: ReactNode }) {
       <Backdrop open={dragging || busy} sx={{ zIndex: (theme) => theme.zIndex.modal + 1, color: '#fff', flexDirection: 'column', gap: 2 }}>
         {busy ? <CircularProgress color="inherit" aria-label="Importing" /> : <UploadFileIcon sx={{ fontSize: 64 }} />}
         <Typography variant="h6" component="p">
-          {busy ? 'Importing…' : 'Drop to import: Markdown, text, PDF, Word, PowerPoint or transcript JSON'}
+          {busy ? 'Importing…' : 'Drop to import: Markdown, text, PDF, Word, PowerPoint or a transcript file (KVox JSON)'}
         </Typography>
       </Backdrop>
     </ImportContext.Provider>

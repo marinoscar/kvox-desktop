@@ -23,7 +23,7 @@ import { importLocalFiles } from './import-file';
 
 /** What the dialog offers first; "All files" stays available (the content decides, not the name). */
 const FILTERS = [
-  { name: 'Transcripts, notes and documents', extensions: ['pdf', 'docx', 'pptx', 'json', 'md', 'markdown', 'txt'] },
+  { name: 'Documents, notes and transcript files (KVox JSON)', extensions: ['pdf', 'docx', 'pptx', 'json', 'md', 'markdown', 'txt'] },
   { name: 'All files', extensions: ['*'] },
 ];
 

@@ -258,7 +258,7 @@ function LocalIndexStatus() {
         <Stack spacing={0.5}>
           {index.status.types.map((counts) => (
             <Typography key={counts.type} variant="body2">
-              {DOCUMENT_TYPE_LABELS[counts.type]?.plural ?? counts.type}: {counts.indexed} indexed, {counts.pending} pending
+              {counts.type === 'transcript' ? 'Transcripts' : (DOCUMENT_TYPE_LABELS[counts.type]?.plural ?? counts.type)}: {counts.indexed} indexed, {counts.pending} pending
             </Typography>
           ))}
           {index.status.model && (

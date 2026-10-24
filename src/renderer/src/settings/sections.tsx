@@ -48,7 +48,7 @@ export const DESKTOP_SETTINGS_SECTIONS: SettingsSectionDef[] = [
       },
       {
         title: 'Connected knowledge',
-        description: 'Build a graph of the people, projects and decisions in your meetings. Switch it off at any time.',
+        description: 'Build a graph of the people, projects and decisions in your notes. Switch it off at any time.',
         Icon: HubIcon,
         path: '/settings/knowledge',
       },

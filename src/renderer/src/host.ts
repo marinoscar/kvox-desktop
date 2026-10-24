@@ -57,7 +57,8 @@ export function createDesktopHost(
   const viewer = { userId: connection.userId, permissions: new Set(connection.permissions) };
   // Mirrors the server's `ai.graphEnabled` (on by default, the settings card's switch);
   // `undefined` while unknown keeps the graph UI hidden.
-  const features = { graphEnabled };
+  // Desktop never records or transcribes (ADR-0006): the packages show the note-first Home and no recording wording.
+  const features = { graphEnabled, transcription: false };
 
   const send = async (method: string, path: string, init: KvoxRequestInit | undefined, body?: BodyInit, json = false): Promise<Response> => {
     const response = await fetch(`${api}${buildKvoxUrl(path, init?.query)}`, {
