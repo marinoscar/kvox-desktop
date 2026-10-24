@@ -148,7 +148,7 @@ describe('LocalSearchCard', () => {
 
     expect(await screen.findByText('On — searching on this device')).toBeTruthy();
     expect(await screen.findByText('Notes: 12 indexed, 3 pending')).toBeTruthy();
-    expect(screen.getByText('Recordings: 4 indexed, 0 pending')).toBeTruthy();
+    expect(screen.getByText('Transcripts: 4 indexed, 0 pending')).toBeTruthy();
     expect(screen.getByText('Model: bge-small-en-v1.5-int8')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Index now' }));
