@@ -77,4 +77,6 @@ test('Home is note-first with no recording wording, and a Word document is kept 
   await page.waitForURL(/#\/notes\/(?!new)[^/?]+$/, { timeout: 300_000 });
   await expect(page.getByText(/Imported from/).first()).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText('planning.docx').first()).toBeVisible();
+  // The original file can be downloaded again (marinoscar/kvox#732).
+  await expect(page.getByRole('button', { name: 'Download planning.docx' })).toBeVisible();
 });
