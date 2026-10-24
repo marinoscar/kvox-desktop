@@ -1,10 +1,12 @@
 # KVox Desktop
 
-Single-user, offline-first desktop application for meeting notes and a personal knowledge graph.
+Turn the notes you already have into a personal knowledge graph you can ask questions of. Offline-first.
+
+KVox Desktop is a single-user desktop application. It does not record or transcribe audio: notes come from the documents you import (Word, PowerPoint, PDF, Markdown, text), from note libraries (folders kept in sync), and from transcript files (KVox JSON) exported by KVox web.
 
 ## What it is
 
-- Inputs: PDF transcripts, KVox transcript export JSON, Markdown or text, and KVox note exports. There is no transcription ([ADR-0006](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0006-desktop-inputs-no-transcription.md)).
+- Inputs: documents (Word, PowerPoint, PDF, Markdown, text), note libraries (folders of your documents kept in sync), transcript files (KVox JSON, exported from KVox web) and KVox note exports. There is no audio capture or transcription ([ADR-0006](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0006-desktop-inputs-no-transcription.md)).
 - Outputs: AI notes, a connected-knowledge graph, search, and Ask.
 - AI: one provider, your choice of three, never off: OpenAI, an OpenAI-compatible base URL, or GitHub Copilot ([ADR-0005](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0005-ai-architecture-shared-harness.md)).
 - Data stays on the device. The AI provider is the only cloud egress, plus two one-time, opt-in downloads you start yourself (the on-device search model, the Copilot runtime) ([ADR-0004](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0004-desktop-data-local-only.md)).

@@ -177,7 +177,7 @@ linux:
   syncDesktopName: true
   category: Office
   maintainer: Oscar Marin <oscar@marin.cr>
-  synopsis: Offline-first meeting notes and a personal knowledge graph
+  synopsis: Turn the notes you already have into a personal knowledge graph you can ask questions of. Offline-first.
   artifactName: KVox-${version}-linux-${arch}.${ext}
 deb:
   # Ubuntu 24.04 confines unprivileged user namespaces, which the Chromium

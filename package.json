@@ -4,7 +4,7 @@
   "desktopName": "kvox-desktop.desktop",
   "version": "0.1.0-rc.8",
   "private": true,
-  "description": "KVox Desktop: single-user, offline-first meeting notes and a personal knowledge graph. A host of the @marinoscar/kvox-* packages.",
+  "description": "KVox Desktop: turn the notes you already have into a personal knowledge graph you can ask questions of. Offline-first. A host of the @marinoscar/kvox-* packages.",
   "license": "MIT",
   "author": "Oscar Marin",
   "main": "out/main/index.js",
