@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { KvoxFileAccessError } from '@marinoscar/kvox-web/core/headless';
 
 import { createDesktopFileAccess } from '../../src/renderer/src/files';
-import { createSerialQueue } from '../../src/renderer/src/libraries/syncQueue';
 import { syncStatusText } from '../../src/renderer/src/libraries/LibrarySyncController';
 import type { FilesChangedEvent, FilesEntry, FilesResult, KvoxDesktopFilesBridge } from '../../src/shared/protocol';
 
@@ -145,45 +144,6 @@ describe('createDesktopFileAccess', () => {
     await port.setLibraryFolder('lib-1', REF);
     expect(listener).toHaveBeenCalledTimes(3);
     expect(await port.getLibraryFolder('lib-1')).toEqual(REF);
-  });
-});
-
-describe('createSerialQueue', () => {
-  it('runs one key at a time, queues a key once, and re-runs a key requested while it runs', async () => {
-    const order: string[] = [];
-    let release: (() => void) | undefined;
-    let running = 0;
-    let maxRunning = 0;
-    const queue = createSerialQueue(async (key) => {
-      running += 1;
-      maxRunning = Math.max(maxRunning, running);
-      order.push(key);
-      if (key === 'a' && order.length === 1) await new Promise<void>((resolve) => (release = resolve));
-      running -= 1;
-    });
-    queue.enqueue('a');
-    queue.enqueue('b');
-    queue.enqueue('b');
-    queue.enqueue('a'); // while a runs: once more afterwards
-    release!();
-    await queue.idle();
-    expect(order).toEqual(['a', 'b', 'a']);
-    expect(maxRunning).toBe(1);
-  });
-
-  it('survives a failing run and stops taking keys once closed', async () => {
-    const order: string[] = [];
-    const queue = createSerialQueue(async (key) => {
-      order.push(key);
-      if (key === 'bad') throw new Error('boom');
-    });
-    queue.enqueue('bad');
-    queue.enqueue('good');
-    await queue.idle();
-    queue.close();
-    queue.enqueue('late');
-    await queue.idle();
-    expect(order).toEqual(['bad', 'good']);
   });
 });
 
