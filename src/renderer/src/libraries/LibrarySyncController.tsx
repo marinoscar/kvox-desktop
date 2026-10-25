@@ -4,18 +4,17 @@ import Button from '@mui/material/Button';
 import Snackbar from '@mui/material/Snackbar';
 
 import { useKvoxHost, type KvoxFolderRef } from '@marinoscar/kvox-web/core/headless';
-import { listNoteLibraries, runLibrarySync, type LibrarySyncProgress, type NoteLibrary } from '@marinoscar/kvox-web/notes/headless';
+import { isLibrarySyncCancelled, listNoteLibraries, syncLibrary, type LibrarySyncProgress, type NoteLibrary } from '@marinoscar/kvox-web/notes/headless';
 import { noteImportBatchPath, noteLibraryPath, syncErrorMessage } from '@marinoscar/kvox-web/notes/ui';
 
 import type { DesktopFileAccess } from '../files';
-import { createSerialQueue } from './syncQueue';
 
 // =============================================================================
 // Note libraries kept in sync on Desktop (marinoscar/kvox-desktop#47)
 // =============================================================================
 //
 // Mounted once in App. Orchestration only: every sync is kvox-web's
-// `runLibrarySync` (enumerate, scan, hash what the server asks for, upload),
+// `syncLibrary` (enumerate, scan, hash what the server asks for, upload),
 // with the Desktop file port and `sequential: true`.
 //
 //   at launch     every library bound to a folder on this device is synced
@@ -25,10 +24,11 @@ import { createSerialQueue } from './syncQueue';
 //
 // These syncs confirm themselves: the user chose the folder, which is the
 // opt-in. The interactive confirmation ("Add folder", "Sync now") stays on the
-// packaged pages. One sync at a time, across libraries (`syncQueue.ts`).
+// packaged pages. One sync at a time, across libraries, shared with those pages
+// (kvox-web's library sync coordinator, marinoscar/kvox#725).
 //
 // The status is a small snackbar ("Syncing notes… 12/40") that links to the
-// library while it runs and to the import batch when it is done.
+// library until the scan opens an import batch, then to that batch.
 // =============================================================================
 
 /** What the snackbar shows. */
@@ -68,32 +68,37 @@ export function LibrarySyncController({ files }: { files: DesktopFileAccess | un
     const abort = new AbortController();
     const bound = new Map<string, { library: NoteLibrary; ref: KvoxFolderRef; unwatch: () => void }>();
 
-    const queue = createSerialQueue(async (libraryId) => {
+    // A change seen while the library syncs queues exactly one rerun (the coordinator's default).
+    const request = (libraryId: string) => {
       const entry = bound.get(libraryId);
       if (!entry || abort.signal.aborted) return;
       const { library, ref } = entry;
-      setStatus({ libraryId, name: library.name });
-      try {
-        const result = await runLibrarySync({
-          host: hostRef.current,
-          port: files,
-          library,
-          ref,
-          signal: abort.signal,
-          sequential: true,
-          confirm: () => true,
-          onProgress: (progress) => {
-            if (!abort.signal.aborted) setStatus({ libraryId, name: library.name, progress });
-          },
-        });
-        if (abort.signal.aborted) return;
-        // Nothing uploaded and nothing failed: the folder was already in sync, say nothing.
-        if (result.uploaded === 0 && result.failed.length === 0) setStatus(null);
-        else setStatus({ libraryId, name: library.name, result: { batchId: result.batchId, uploaded: result.uploaded, failed: result.failed.length } });
-      } catch (error) {
-        if (!abort.signal.aborted) setStatus({ libraryId, name: library.name, error: syncErrorMessage(error) });
-      }
-    });
+      const ticket = syncLibrary({
+        host: hostRef.current,
+        port: files,
+        library,
+        ref,
+        signal: abort.signal,
+        sequential: true,
+        confirm: () => true,
+        onProgress: (progress) => {
+          if (!abort.signal.aborted) setStatus({ libraryId, name: library.name, progress });
+        },
+      });
+      ticket.result.then(
+        (result) => {
+          if (abort.signal.aborted) return;
+          // Nothing uploaded and nothing failed: the folder was already in sync, say nothing.
+          if (result.uploaded === 0 && result.failed.length === 0) setStatus(null);
+          else setStatus({ libraryId, name: library.name, result: { batchId: result.batchId, uploaded: result.uploaded, failed: result.failed.length } });
+        },
+        (error: unknown) => {
+          // A Stop on the library page cancels this sync too; that is not an error.
+          if (abort.signal.aborted || isLibrarySyncCancelled(error)) return;
+          setStatus({ libraryId, name: library.name, error: syncErrorMessage(error) });
+        },
+      );
+    };
 
     const refresh = async (initial: boolean) => {
       const libraries = await listNoteLibraries(hostRef.current);
@@ -110,9 +115,9 @@ export function LibrarySyncController({ files }: { files: DesktopFileAccess | un
           continue;
         }
         previous?.unwatch();
-        const unwatch = files.watch ? files.watch(ref, () => queue.enqueue(library.id)) : () => undefined;
+        const unwatch = files.watch ? files.watch(ref, () => request(library.id)) : () => undefined;
         bound.set(library.id, { library, ref, unwatch });
-        if (initial) queue.enqueue(library.id);
+        if (initial) request(library.id);
       }
       for (const [libraryId, entry] of bound) {
         if (seen.has(libraryId)) continue;
@@ -124,8 +129,8 @@ export function LibrarySyncController({ files }: { files: DesktopFileAccess | un
     void refresh(true).catch(() => undefined);
     const offBindings = files.onBindingsChanged(() => void refresh(false).catch(() => undefined));
     return () => {
+      // Detaches every request: a sync nobody else holds stops, a queued rerun is dropped.
       abort.abort();
-      queue.close();
       offBindings();
       for (const entry of bound.values()) entry.unwatch();
       bound.clear();
@@ -134,7 +139,8 @@ export function LibrarySyncController({ files }: { files: DesktopFileAccess | un
 
   if (!status) return null;
   const finished = Boolean(status.result || status.error);
-  const target = status.result?.batchId ? noteImportBatchPath(status.result.batchId) : noteLibraryPath(status.libraryId);
+  const batchId = status.result?.batchId ?? status.progress?.batchId ?? null;
+  const target = batchId ? noteImportBatchPath(batchId) : noteLibraryPath(status.libraryId);
   return (
     <Snackbar
       open
@@ -147,7 +153,7 @@ export function LibrarySyncController({ files }: { files: DesktopFileAccess | un
       message={<span data-testid="library-sync-status">{syncStatusText(status)}</span>}
       action={
         <Button color="inherit" size="small" component={RouterLink} to={target} onClick={() => finished && setStatus(null)}>
-          {status.result?.batchId ? 'View' : 'Open'}
+          {batchId ? 'View' : 'Open'}
         </Button>
       }
     />
