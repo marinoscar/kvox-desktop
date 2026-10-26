@@ -46,7 +46,6 @@ export class DesktopDataController {
       subjectType: BACKUP_SUBJECT,
       subjectId: randomUUID(),
       payload: { path: pathOf(body, '.kvoxbackup') },
-      reason: 'user',
     });
     return { jobId: queued.id };
   }
@@ -60,7 +59,6 @@ export class DesktopDataController {
       subjectType: BACKUP_SUBJECT,
       subjectId: randomUUID(),
       payload: { path: pathOf(body) },
-      reason: 'user',
     });
     return { jobId: queued.id };
   }
