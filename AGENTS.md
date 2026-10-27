@@ -14,6 +14,13 @@ KVox Desktop is a **host** of the published `@marinoscar/kvox-*` packages ([ADR-
 
 Documents, notes, the graph and settings live under the user data folder. The only outbound traffic is the configured AI provider (and update checks, only when the user enables them). See [ADR-0004](https://github.com/marinoscar/kvox/blob/main/docs/decisions/0004-desktop-data-local-only.md). Never add telemetry, crash upload or remote assets.
 
+## MANDATORY: No real people, companies or user material
+
+- **Material a user shares is never reused.** Never use the content of documents, notes, transcripts, screenshots or any other material the user shares with an assistant, or anything derived from it (names, numbers, quotes, structure that identifies it), in code, tests, fixtures, evaluation sets, prompts, documentation, examples, issues, pull requests or commit messages. Shared material is used only to diagnose the problem in the conversation.
+- **No real names as examples.** Never use the name of a real person, or a real company, organization, product or brand, as an example anywhere in the repository: code comments, prompts, test data, fixtures, evaluation scenarios, docs, issue and PR text. Use clearly invented placeholders: `Person A`, `Avery Example`, `Org Alpha`, `Org Beta`, `Product X`, `Project P1`, and `@example.test` email addresses. Do not borrow well-known fictional brands either (Contoso, Acme, Northwind, Initech).
+- **Exempt, and only these:** a real vendor or service a feature integrates by name (for example a provider adapter calling that vendor's API, its SDK package names, its documented endpoints), and legal or authorship metadata (package `author`, copyright lines, code-signing publisher name).
+- **Fix what you find.** When you find a real name used as an example, replace it with a placeholder in the same change, or open a follow-up if it changes recorded snapshots.
+
 ## Git and PRs
 
 - Every change ships as a PR against `main`; never push to `main`. Conventional Commits (`feat`, `fix`, `refactor`, `test`, `docs`, `chore`). Link issues with `Fixes marinoscar/kvox#<n>`.
