@@ -149,4 +149,16 @@ export class PgSettings implements KvoxSettingsPort {
       if (attempt >= 1) throw new ConflictException(`Settings "${name}" changed while they were being saved`);
     }
   }
+
+  /**
+   * Desktop has one user on one device, so the user's zone is the device zone
+   * (kvox-ports.md, `readUserTimeZone`). `null` only when the runtime cannot tell.
+   */
+  async readUserTimeZone(_userId: string): Promise<string | null> {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+    } catch {
+      return null;
+    }
+  }
 }
