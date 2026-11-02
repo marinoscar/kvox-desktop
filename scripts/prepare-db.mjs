@@ -11,11 +11,14 @@
 //   2. `platform db compose`  composes the platform schema; the domain installer
 //                             refuses a host without `User`, `StorageObject`, `Job`.
 //   3. `kvox-db sync`         installs the domain fragments and migrations under
-//                             `--names after-host`. A host with no domain history
-//                             would otherwise sort the September-dated domain
-//                             migrations BEFORE the platform tables they
-//                             reference. This is why step 1 comes first: the new
-//                             names are "one second after the newest directory".
+//                             `--names stable`: `<the package id's timestamp>_kvox_<slug>`
+//                             (`20260914130000_add_transcripts` becomes
+//                             `20260914130000_kvox_add_transcripts`), a pure function
+//                             of the package migration, never of the platform's
+//                             migration count. The domain ids are dated from
+//                             September 2026, after the platform's fixed clock
+//                             below, so the platform tables they reference come
+//                             first.
 //   4. `platform db compose`  again, now with the domain fragments.
 //   5. `prisma generate`      the client lands in node_modules/.prisma/client of
 //                             this (temporary) project.
@@ -29,8 +32,12 @@
 // same package versions would name the same migrations differently and an
 // existing user database (`_prisma_migrations`) would no longer match the
 // app's history. A fixed clock makes the names a function of the package
-// versions only. Names still shift when an upgrade adds a platform migration;
-// see the README ("Database migrations") for that open point.
+// versions only; a platform upgrade appends names after the existing ones.
+//
+// Builds up to 0.1.0-rc.14 used `--names after-host`, whose domain names moved
+// whenever a platform release added a migration. A database from such a build
+// is set aside (kept, never deleted) at start-up: `legacy-database.ts`. See the
+// README ("Database migrations").
 // =============================================================================
 
 import { spawnSync } from 'node:child_process';
@@ -71,13 +78,7 @@ const MIGRATION_CLOCK = '2026-01-01T00:00:00.000Z';
 
 run('install the platform migrations', platform, ['db', 'sync', '--root', projectDir, '--timestamp', MIGRATION_CLOCK]);
 run('compose the platform schema', platform, ['db', 'compose', '--root', projectDir]);
-run('install the domain fragments and migrations (after-host names)', kvoxDb, [
-  'sync',
-  '--root',
-  projectDir,
-  '--names',
-  'after-host',
-]);
+run('install the domain fragments and migrations (stable names)', kvoxDb, ['sync', '--root', projectDir, '--names', 'stable']);
 run('compose the platform and domain schema', platform, ['db', 'compose', '--root', projectDir]);
 run('generate the Prisma client', prisma, ['generate', '--config', join(projectDir, 'prisma.config.ts')]);
 

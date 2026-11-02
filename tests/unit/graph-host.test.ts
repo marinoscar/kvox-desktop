@@ -130,7 +130,7 @@ describe('the graph and Ask on the Desktop server', () => {
     const conversation = await api<{ id: string }>('/ask/conversations', { method: 'POST', body: '{}' });
     expect(conversation.status).toBe(201);
     const ask = () =>
-      api<unknown>(`/ask/conversations/${conversation.body.id}/messages`, { method: 'POST', body: JSON.stringify({ content: 'Who is Joe?' }) });
+      api<unknown>(`/ask/conversations/${conversation.body.id}/messages`, { method: 'POST', body: JSON.stringify({ content: 'Who is Jordan?' }) });
     expect((await api('/desktop/knowledge')).body).toEqual({ graphEnabled: true });
 
     const off = await api('/desktop/knowledge', { method: 'PATCH', body: JSON.stringify({ graphEnabled: false }) });
@@ -153,6 +153,53 @@ describe('the graph and Ask on the Desktop server', () => {
       expect((await api('/desktop/knowledge', { method: 'PATCH', body })).status).toBe(400);
     }
     expect((await api('/desktop/knowledge')).body).toEqual({ graphEnabled: true });
+  });
+
+  it('serves the graph preferences through /user-settings, versioned, with the package merge', async () => {
+    // Nothing written yet: a sparse document at version 0 (every graph preference at its default).
+    expect((await api('/user-settings')).body).toEqual({ version: 0 });
+
+    // What the e2e and the Knowledge graph settings page send: auto-commit off.
+    const off = await api<Record<string, unknown>>('/user-settings', {
+      method: 'PATCH',
+      headers: { 'If-Match': '0' },
+      body: JSON.stringify({ graph: { review: { minConfidence: 0.7, autoCommitSafeRows: false } } }),
+    });
+    expect(off.status).toBe(200);
+    expect(off.body).toMatchObject({ version: 1, graph: { review: { minConfidence: 0.7, autoCommitSafeRows: false } } });
+
+    // A stale version is a 409 (the hooks re-read and retry once); nothing changes.
+    const stale = await api('/user-settings', {
+      method: 'PATCH',
+      headers: { 'If-Match': '0' },
+      body: JSON.stringify({ graph: { review: { autoCommitSafeRows: true } } }),
+    });
+    expect(stale.status).toBe(409);
+
+    // `null` puts a field back to its default (the package's merge): the stored field goes away.
+    const reset = await api<{ version: number; graph?: { review?: Record<string, unknown> } }>('/user-settings', {
+      method: 'PATCH',
+      headers: { 'If-Match': '1' },
+      body: JSON.stringify({ graph: { review: { autoCommitSafeRows: null } } }),
+    });
+    expect(reset.status).toBe(200);
+    expect(reset.body.version).toBe(2);
+    expect(reset.body.graph?.review?.autoCommitSafeRows).toBeUndefined();
+    expect((await api('/user-settings')).body).toEqual(reset.body);
+  });
+
+  it('refuses a /user-settings patch of an unknown namespace or an invalid graph value', async () => {
+    const before = (await api<{ version: number }>('/user-settings')).body;
+    for (const body of ['null', '[]', '{"theme":"dark"}', '{"graph":{"review":{"minConfidence":7}}}', '{"graph":{"review":{"autoCommitSafeRows":"no"}}}']) {
+      expect((await api('/user-settings', { method: 'PATCH', body })).status, body).toBe(400);
+    }
+    expect((await api('/user-settings')).body).toEqual(before);
+  });
+
+  it('answers who the user is in the graph (none chosen yet)', async () => {
+    // GraphSelfService reads the profile name from the host's `users` row: the seeded local user's.
+    const self = await api<{ self: unknown; suggestions: unknown[]; displayName: string | null }>('/graph/self');
+    expect(self).toEqual({ status: 200, body: { self: null, suggestions: [], displayName: 'Local user' } });
   });
 
   it('runs one housekeeping round over the four enqueuers', async () => {

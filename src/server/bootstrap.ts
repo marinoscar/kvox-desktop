@@ -131,6 +131,13 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     log: options.log,
   });
   if (restored) await discardPreviousData(folder);
+  if (database.legacyDataDir) {
+    // The one notice of the switch to stable migration names (legacy-database.ts); the log line is startDatabase's.
+    options.showNotification(
+      'KVox Desktop',
+      `Your knowledge base was reset for this update. The previous database is kept at ${database.legacyDataDir}.`,
+    );
+  }
   const prisma = createPrismaClient(database);
   const timings: Record<string, number> = { ...database.timings };
 
@@ -233,12 +240,13 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     // `credentials: true` because the packaged SSE reader (`createFetchSseConnect`) fetches
     // with `credentials: 'include'`; without it the browser drops every stream (a note's
     // generation, an Ask answer) and the page only catches up on a reload. Nothing here
-    // sets a cookie: the per-launch bearer token is still the only credential.
+    // sets a cookie: the per-launch bearer token is still the only credential. `If-Match`
+    // carries the version of a `/api/user-settings` write (kvox-web's graph preferences).
     app.enableCors({
       origin: [...options.allowedOrigins],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-      allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'Last-Event-ID', 'If-None-Match'],
+      allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'Last-Event-ID', 'If-None-Match', 'If-Match'],
       exposedHeaders: ['Content-Disposition', 'ETag'],
       maxAge: 600,
     });

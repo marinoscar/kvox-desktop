@@ -4,6 +4,7 @@ import ManageSearchIcon from '@mui/icons-material/ManageSearch';
 import PrivacyTipIcon from '@mui/icons-material/PrivacyTip';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 
+import { kvoxGraphUserSettingsSections } from '@marinoscar/kvox-web/graph/ui';
 import { kvoxNotesUserSettingsSections } from '@marinoscar/kvox-web/notes/ui';
 import type { SettingsSectionDef } from '@marinoscar/platform-web/settings/ui';
 
@@ -24,6 +25,11 @@ import type { SettingsSectionDef } from '@marinoscar/platform-web/settings/ui';
 //
 // "Note Templates" is the notes slice's own card (`kvoxNotesUserSettingsSections`),
 // the one KVox web shows, so its title, description and icon are the package's.
+// "Knowledge graph" is the graph slice's card (`kvoxGraphUserSettingsSections`)
+// the same way, minus its `graph:write` gate: the one local user holds every
+// graph permission (`LOCAL_USER_PERMISSIONS`, `src/server/permissions.ts`), and
+// its page is mounted with the other settings pages even while connected
+// knowledge is off (the page says so and stays usable).
 // =============================================================================
 
 /** The hub's `hubKey` (scroll restoration), title and subtitle. */
@@ -35,6 +41,13 @@ export const DESKTOP_SETTINGS_PATH = '/settings';
 
 const [noteTemplatesCard] = kvoxNotesUserSettingsSections.account;
 if (!noteTemplatesCard) throw new Error('The notes slice declares no Note Templates settings card');
+
+/** The graph slice's Knowledge graph page (`/settings/knowledge-graph`). */
+export const KNOWLEDGE_GRAPH_SETTINGS_PATH = '/settings/knowledge-graph';
+const packageKnowledgeGraphCard = kvoxGraphUserSettingsSections.knowledge.find((card) => card.path === KNOWLEDGE_GRAPH_SETTINGS_PATH);
+if (!packageKnowledgeGraphCard) throw new Error('The graph slice declares no Knowledge graph settings card');
+// The `graph:write` gate is dropped on purpose (see above).
+const { permission: _graphWrite, ...knowledgeGraphCard } = packageKnowledgeGraphCard;
 
 export const DESKTOP_SETTINGS_SECTIONS: SettingsSectionDef[] = [
   {
@@ -59,6 +72,7 @@ export const DESKTOP_SETTINGS_SECTIONS: SettingsSectionDef[] = [
         Icon: ManageSearchIcon,
         path: '/settings/search',
       },
+      knowledgeGraphCard,
     ],
   },
   {

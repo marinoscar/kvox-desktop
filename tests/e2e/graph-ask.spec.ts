@@ -22,15 +22,21 @@ import { QUESTIONS, scriptedModel } from '../support/scripted-model';
 //   import each transcript (JSON, named speakers) -> generate its note -> the
 //   graph extracts it (kg.extract) -> Review: open the proposal, accept all,
 //   "Send to graph" -> Ask:
-//     "What are the action items from Joe?"            search -> list_commitments
-//     "What meetings have we had with Jenny's boss?"   search -> neighbors(REPORTS_TO) -> timeline
+//
+//   (The MANUAL review path: since kvox 0.1.0-next.23 the confident rows of a
+//   proposal commit by themselves (`review.autoCommitSafeRows`, on by default,
+//   marinoscar/kvox#779), so the test turns that preference off first, through
+//   `PATCH /api/user-settings` as the Knowledge graph settings page does.)
+//     "What are the action items from Jordan?"         search -> list_commitments
+//     "What meetings have we had with Jamie's boss?"   search -> neighbors(REPORTS_TO) -> timeline
 //   -> each answer names the right commitment / meeting and cites it.
 //
-// Then the manual edit: no meeting says whom Priya Shah reports to, so the third
-// question has no answer until "Set manager" on her entity page says Mark Chen.
+// Then the manual edit: no meeting says whom Quinn Testcase reports to, so the third
+// question has no answer until "Set manager" on her entity page says Riley Demo.
 //
 // Also checked: every meeting has its ATTENDED rows from the named speakers (the
-// D4 leftover); the graph exports as Turtle and that file imports back through
+// D4 leftover); the explorer's G6 canvas mounts with nodes and its zoom-in and
+// fit buttons work with no console error and no CSP violation; the graph exports as Turtle and that file imports back through
 // SHACL validation (run in a utility process: the RunAsNode fuse is off); and
 // no request reaches a host but 127.0.0.1. The model is
 // scripted (`tests/support/scripted-model.ts`, over the package's own scripted
@@ -40,15 +46,17 @@ import { QUESTIONS, scriptedModel } from '../support/scripted-model';
 const ROOT = resolve(__dirname, '..', '..');
 const FIXTURES = join(ROOT, 'tests', 'fixtures', 'graph');
 const MEETINGS = [
-  { file: 'g01-weekly-sync.transcript.json', title: 'Weekly sync with Maria Lopez', speakers: ['Jenny Kim', 'Joe Park', 'Maria Lopez'] },
-  { file: 'g02-standup.transcript.json', title: 'Joe and Jenny standup', speakers: ['Jenny Kim', 'Joe Park'] },
-  { file: 'g03-platform-review.transcript.json', title: 'Data platform review with Mark Chen', speakers: ['Mark Chen', 'Priya Shah'] },
+  { file: 'g01-weekly-sync.transcript.json', title: 'Weekly sync with Morgan Placeholder', speakers: ['Jamie Fixture', 'Jordan Sample', 'Morgan Placeholder'] },
+  { file: 'g02-standup.transcript.json', title: 'Jordan and Jamie standup', speakers: ['Jamie Fixture', 'Jordan Sample'] },
+  { file: 'g03-platform-review.transcript.json', title: 'Data platform review with Riley Demo', speakers: ['Quinn Testcase', 'Riley Demo'] },
 ] as const;
 const userDataDir = mkdtempSync(join(tmpdir(), 'kvox-e2e-graph-'));
 const requests: string[] = [];
 const mainLog: string[] = [];
 const results: Record<string, unknown> = {};
 const consoleErrors: string[] = [];
+/** Every console error of the window, in order (the explorer check reads the ones logged after it starts). */
+const allConsoleErrors: string[] = [];
 let app: ElectronApplication | undefined;
 let provider: OpenAiCompatibleMock | undefined;
 
@@ -80,14 +88,22 @@ async function answerDialogWith(application: ElectronApplication, paths: string[
 }
 
 /** A request on the local server with the window's own connection (the `{ data }` envelope unwrapped). */
-async function api<T>(page: Page, path: string, init: { method?: string; json?: unknown } = {}): Promise<T> {
+async function api<T>(
+  page: Page,
+  path: string,
+  init: { method?: string; json?: unknown; headers?: Record<string, string> } = {},
+): Promise<T> {
   return page.evaluate(
-    async ({ p, method, json }) => {
+    async ({ p, method, json, extraHeaders }) => {
       const bridge = (window as unknown as { kvoxDesktop: KvoxDesktopBridge }).kvoxDesktop;
       const { baseUrl, token } = await bridge.connection();
       const response = await fetch(`${baseUrl}/api${p}`, {
         method: method ?? 'GET',
-        headers: { Authorization: `Bearer ${token}`, ...(json === undefined ? {} : { 'Content-Type': 'application/json' }) },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(json === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...extraHeaders,
+        },
         ...(json === undefined ? {} : { body: JSON.stringify(json) }),
       });
       const text = await response.text();
@@ -95,8 +111,73 @@ async function api<T>(page: Page, path: string, init: { method?: string; json?: 
       const body = text === '' ? null : JSON.parse(text);
       return body && typeof body === 'object' && 'data' in body && Object.keys(body).length <= 2 ? body.data : body;
     },
-    { p: path, method: init.method, json: init.json },
+    { p: path, method: init.method, json: init.json, extraHeaders: init.headers ?? {} },
   ) as Promise<T>;
+}
+
+/** Turns off the automatic commit of confident rows (#779) for the local user, as the settings page does. */
+async function useManualReview(page: Page): Promise<void> {
+  const { version } = await api<{ version: number }>(page, '/user-settings');
+  await api(page, '/user-settings', {
+    method: 'PATCH',
+    headers: { 'If-Match': String(version) },
+    json: { graph: { review: { minConfidence: 0.7, autoCommitSafeRows: false } } },
+  });
+  const saved = await api<{ graph?: { review?: { autoCommitSafeRows?: boolean } } }>(page, '/user-settings');
+  expect(saved.graph?.review?.autoCommitSafeRows).toBe(false);
+}
+
+/**
+ * The graph explorer on the whole graph (its landing view, `GET /graph/overview?edges=true`): the G6
+ * canvas mounts with nodes, and its on-screen zoom-in and fit buttons (kvox-web's `ZoomControls`)
+ * run with no console error and no CSP violation.
+ */
+async function checkExplorerCanvas(page: Page): Promise<void> {
+  const firstError = allConsoleErrors.length;
+  // A violation is also a console error; the event names the directive, which the console text may not.
+  await page.evaluate(() => {
+    const w = window as unknown as { __cspViolations?: string[] };
+    w.__cspViolations = [];
+    document.addEventListener('securitypolicyviolation', (event) => {
+      w.__cspViolations!.push(`${event.violatedDirective} ${event.blockedURI}`);
+    });
+  });
+  // The commits queued the map's layout (`kg.graph_layout`): the whole-graph view draws its snapshot.
+  const overview = await until(
+    () => api<{ status: string; nodeCount: number }>(page, '/graph/overview'),
+    (o) => o.status === 'ready' && o.nodeCount > 0,
+    'the graph map (kg.graph_layout)',
+    180_000,
+  );
+  await page.goto(page.url().split('#')[0] + '#/graph/explore');
+  await page.waitForURL(/#\/graph\/explore$/);
+
+  // The pane names its node count; the canvas G6 drew into is inside it.
+  const pane = page.getByRole('application', { name: /^Graph explorer, \d+ nodes\./ });
+  await expect(pane).toBeVisible();
+  await expect(pane).not.toHaveAttribute('aria-busy', 'true');
+  await expect(pane).not.toHaveAccessibleName(/^Graph explorer, 0 nodes\./);
+  const nodes = Number(/(\d+) nodes/.exec((await pane.getAttribute('aria-label')) ?? '')?.[1] ?? 0);
+  expect(nodes, 'nodes on the explorer canvas').toBeGreaterThan(0);
+  const surface = pane.getByTestId('graph-canvas');
+  await expect(surface.locator('canvas').first()).toBeAttached();
+  const size = await surface.locator('canvas').first().evaluate((c: HTMLCanvasElement) => ({ width: c.width, height: c.height }));
+  expect(size.width).toBeGreaterThan(0);
+  expect(size.height).toBeGreaterThan(0);
+
+  // The camera cluster: zoom in, then fit.
+  const zoom = pane.getByRole('group', { name: 'Canvas zoom' });
+  await expect(zoom).toBeVisible();
+  await zoom.getByRole('button', { name: 'Zoom in' }).click();
+  await zoom.getByRole('button', { name: 'Fit to screen' }).click();
+  // The canvas is still there after both, with its nodes.
+  await expect(surface.locator('canvas').first()).toBeAttached();
+  await expect(pane).not.toHaveAccessibleName(/^Graph explorer, 0 nodes\./);
+
+  results.explorer = { nodes, mapNodes: overview.nodeCount, canvas: size };
+  const violations = await page.evaluate(() => (window as unknown as { __cspViolations?: string[] }).__cspViolations ?? []);
+  expect(violations, 'CSP violations in the explorer').toEqual([]);
+  expect(allConsoleErrors.slice(firstError), 'console errors in the explorer').toEqual([]);
 }
 
 /** Polls `read` until `done` holds (the job loop runs in the background). */
@@ -194,17 +275,22 @@ test('the reference questions are answered with citations, and a manager set by 
   const page = await app.firstWindow();
   // A blocked request (CORS) is a console error: none may happen.
   page.on('console', (message) => {
-    if (message.type() === 'error' && /CORS|blocked/i.test(message.text())) consoleErrors.push(message.text().slice(0, 300));
+    if (message.type() !== 'error') return;
+    allConsoleErrors.push(message.text().slice(0, 300));
+    if (/CORS|blocked/i.test(message.text())) consoleErrors.push(message.text().slice(0, 300));
   });
+  page.on('pageerror', (error) => allConsoleErrors.push(`pageerror: ${error.message.slice(0, 300)}`));
   await expect(homeHeading(page)).toBeVisible({ timeout: 180_000 });
   await configureAiProvider(page, { baseUrl: provider!.baseUrl, apiKey: 'sk-e2e-graph-0123456789abcdef' });
+  // This scenario walks the manual review: no proposal may commit by itself.
+  await useManualReview(page);
 
   // ---- Import, extract, review, commit: the three meetings ------------------
   for (const meeting of MEETINGS) await importAndCommit(page, meeting);
 
   // ---- The graph: one entity per person, a Meeting per transcript ----------
   const persons = await api<{ items: Array<{ id: string; label: string }> }>(page, '/graph/entities?type=Person');
-  expect(persons.items.map((e) => e.label).sort()).toEqual(['Jenny Kim', 'Joe Park', 'Maria Lopez', 'Mark Chen', 'Priya Shah']);
+  expect(persons.items.map((e) => e.label).sort()).toEqual(['Jamie Fixture', 'Jordan Sample', 'Morgan Placeholder', 'Quinn Testcase', 'Riley Demo']);
   const person = new Map(persons.items.map((e) => [e.label, e.id]));
   const meetings = await api<{ items: Array<{ id: string; label: string }> }>(page, '/graph/entities?type=Meeting');
   expect(meetings.items.map((e) => e.label).sort()).toEqual(MEETINGS.map((m) => m.title).sort());
@@ -217,6 +303,9 @@ test('the reference questions are answered with citations, and a manager set by 
   await page.waitForURL(/#\/graph\/review$/);
   await expect(railItem(page, 'Review')).toHaveAttribute('aria-current', 'page');
   await expect(railItem(page, 'Knowledge')).not.toHaveAttribute('aria-current', 'page');
+
+  // ---- The explorer's canvas (G6, kvox-web 0.1.0-next.23) --------------------
+  await checkExplorerCanvas(page);
 
   // ---- ATTENDED from the named speakers (the D4 leftover) ------------------
   const attended: Record<string, string[]> = {};
@@ -234,7 +323,7 @@ test('the reference questions are answered with citations, and a manager set by 
   results.attended = attended;
   for (const meeting of MEETINGS) expect(attended[meeting.title], `ATTENDED of "${meeting.title}"`).toEqual([...meeting.speakers]);
 
-  // ---- "What are the action items from Joe?" -------------------------------
+  // ---- "What are the action items from Jordan?" -------------------------------
   const actionItems = await ask(page, QUESTIONS.actionItems);
   expect(actionItems.status).toBe('complete');
   expect(actionItems.toolCalls.map((c) => c.name)).toEqual(['search', 'list_commitments']);
@@ -243,46 +332,46 @@ test('the reference questions are answered with citations, and a manager set by 
   expect(actionItems.content).not.toContain('vendor review');
   expect(actionItems.citations.length).toBeGreaterThan(0);
   expect(actionItems.citations.every((c) => c.valid)).toBe(true);
-  expect(actionItems.citations.find((c) => c.kind === 'entity')?.label).toBe('Joe Park');
+  expect(actionItems.citations.find((c) => c.kind === 'entity')?.label).toBe('Jordan Sample');
   expect(actionItems.citations.filter((c) => c.kind === 'evidence').map((c) => c.label)).toEqual([MEETINGS[0].title]);
   // The answer streamed into the page (no reload), its citation chip naming the meeting.
   const thread = page.getByRole('region', { name: 'Conversation' });
   await expect(thread.getByText('Send the budget draft').first()).toBeVisible();
   await expect(thread.getByRole('button', { name: `Source 1: ${MEETINGS[0].title}` })).toBeVisible();
 
-  // ---- "What meetings have we had with Jenny's boss?" ----------------------
+  // ---- "What meetings have we had with Jamie's boss?" ----------------------
   const bossMeetings = await ask(page, QUESTIONS.bossMeetings);
   expect(bossMeetings.status).toBe('complete');
   expect(bossMeetings.toolCalls.map((c) => c.name)).toEqual(['search', 'neighbors', 'timeline']);
   expect(bossMeetings.toolCalls.every((c) => c.error === null)).toBe(true);
-  expect(bossMeetings.toolCalls[2].summary).toContain('Maria Lopez');
-  expect(bossMeetings.content).toContain('Maria Lopez');
+  expect(bossMeetings.toolCalls[2].summary).toContain('Morgan Placeholder');
+  expect(bossMeetings.content).toContain('Morgan Placeholder');
   expect(bossMeetings.content).toContain(MEETINGS[0].title);
   expect(bossMeetings.content).not.toContain(MEETINGS[1].title);
   expect(bossMeetings.citations.every((c) => c.valid)).toBe(true);
   expect(bossMeetings.citations.some((c) => c.via?.kind === 'relation')).toBe(true);
   expect(bossMeetings.citations.filter((c) => c.kind === 'evidence').every((c) => c.label === MEETINGS[0].title)).toBe(true);
 
-  // ---- No meeting says whom Priya reports to --------------------------------
+  // ---- No meeting says whom Quinn reports to --------------------------------
   const before = await ask(page, QUESTIONS.manualBossMeetings, `${QUESTIONS.manualBossMeetings} (before the manual edit)`);
   expect(before.content).not.toContain(MEETINGS[2].title);
 
   // ---- Set her manager by hand on her entity page ---------------------------
-  await page.goto(page.url().split('#')[0] + `#/graph/entities/${person.get('Priya Shah')}`);
-  await expect(page.getByRole('heading', { name: 'Priya Shah', level: 1 })).toBeVisible();
+  await page.goto(page.url().split('#')[0] + `#/graph/entities/${person.get('Quinn Testcase')}`);
+  await expect(page.getByRole('heading', { name: 'Quinn Testcase', level: 1 })).toBeVisible();
   await page.getByRole('button', { name: 'Set manager' }).click();
   const dialog = page.getByRole('dialog', { name: 'Set manager' });
-  await dialog.getByRole('combobox', { name: 'Manager' }).fill('Mark');
-  await page.getByRole('option', { name: /Mark Chen/ }).click();
+  await dialog.getByRole('combobox', { name: 'Manager' }).fill('Riley');
+  await page.getByRole('option', { name: /Riley Demo/ }).click();
   await dialog.getByRole('button', { name: 'Save' }).click();
   await expect(page.getByText('Saved.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Remove Reports to Mark Chen' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Remove Reports to Riley Demo' })).toBeVisible();
 
   const manual = await ask(page, QUESTIONS.manualBossMeetings);
   expect(manual.status).toBe('complete');
   expect(manual.toolCalls.map((c) => c.name)).toEqual(['search', 'neighbors', 'timeline']);
   expect(manual.toolCalls.every((c) => c.error === null)).toBe(true);
-  expect(manual.content).toContain('Mark Chen');
+  expect(manual.content).toContain('Riley Demo');
   expect(manual.content).toContain(MEETINGS[2].title);
   expect(manual.citations.every((c) => c.valid)).toBe(true);
   expect(manual.citations.some((c) => c.via?.kind === 'relation')).toBe(true);
@@ -307,10 +396,10 @@ test('the reference questions are answered with citations, and a manager set by 
     form.append('file', new Blob([turtle], { type: 'text/turtle' }), 'graph.ttl');
     const response = await fetch(`${baseUrl}/api/graph/imports`, { method: 'POST', headers: auth, body: form });
     const body = await response.json();
-    return { status: response.status, proposalId: (body.data ?? body).proposalId as string, mentionsMark: turtle.includes('Mark Chen') };
+    return { status: response.status, proposalId: (body.data ?? body).proposalId as string, mentionsManager: turtle.includes('Riley Demo') };
   }, exported.downloadUrl!);
   expect(imported.status).toBe(202);
-  expect(imported.mentionsMark).toBe(true);
+  expect(imported.mentionsManager).toBe(true);
   const importProposal = await until(
     () => api<{ proposal: { status: string } }>(page, `/graph/proposals/${imported.proposalId}`),
     (p) => p.proposal.status !== 'extracting',

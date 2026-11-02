@@ -104,7 +104,7 @@ test('every input kind imports from the dialog or by drag and drop, with no egre
   await page.waitForURL(/#\/notes\/new\?transcriptId=/);
   const transcriptId = decodeURIComponent(/transcriptId=([^&]+)/.exec(page.url())![1]);
   const transcript = await apiGet<{ recordedAt: string; speakers: Array<{ displayName: string }> }>(page, `/transcripts/${transcriptId}`);
-  expect(transcript.speakers.map((speaker) => speaker.displayName)).toEqual(['Dana Example', 'Lee Ortiz', 'Speaker C']);
+  expect(transcript.speakers.map((speaker) => speaker.displayName)).toEqual(['Dana Example', 'Casey Mockwell', 'Speaker C']);
   expect(new Date(transcript.recordedAt).toISOString()).toBe('2026-03-04T15:00:00.000Z');
   await expect(page.getByRole('combobox', { name: 'Transcript' })).toContainText('M03 roadmap sync');
   await page.getByRole('button', { name: 'Generate' }).click();

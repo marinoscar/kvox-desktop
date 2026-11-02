@@ -25,47 +25,47 @@ import type { MockResponder, MockToolCall } from './openai-compatible-mock';
 /** The meetings of tests/fixtures/graph, as the model extracts them. */
 export const GRAPH_MEETINGS: readonly KvoxScenarioMeeting[] = [
   {
-    title: 'Weekly sync with Maria Lopez',
+    title: 'Weekly sync with Morgan Placeholder',
     people: [
-      { label: 'Maria Lopez', quote: 'Thanks Maria', attended: false },
-      { label: 'Jenny Kim', quote: 'Jenny Kim reports to me', attended: false },
-      { label: 'Joe Park', quote: 'Joe, can you send the budget draft', attended: false },
+      { label: 'Morgan Placeholder', quote: 'Thanks Morgan', attended: false },
+      { label: 'Jamie Fixture', quote: 'Jamie Fixture reports to me', attended: false },
+      { label: 'Jordan Sample', quote: 'Jordan, can you send the budget draft', attended: false },
     ],
-    relations: [{ type: 'REPORTS_TO', from: 'Jenny Kim', to: 'Maria Lopez', quote: 'Jenny Kim reports to me on the platform team.' }],
+    relations: [{ type: 'REPORTS_TO', from: 'Jamie Fixture', to: 'Morgan Placeholder', quote: 'Jamie Fixture reports to me on the platform team.' }],
     commitments: [
       {
-        owner: 'Joe Park',
-        counterparty: 'Maria Lopez',
+        owner: 'Jordan Sample',
+        counterparty: 'Morgan Placeholder',
         title: 'Send the budget draft',
-        statement: 'Joe Park will send the budget draft to Maria Lopez by Friday.',
+        statement: 'Jordan Sample will send the budget draft to Morgan Placeholder by Friday.',
         status: 'open',
-        quote: 'I will send the budget draft to Maria by Friday.',
+        quote: 'I will send the budget draft to Morgan by Friday.',
       },
       {
-        owner: 'Joe Park',
+        owner: 'Jordan Sample',
         counterparty: null,
         title: 'Finish the vendor review',
-        statement: 'Joe Park finished the vendor review.',
+        statement: 'Jordan Sample finished the vendor review.',
         status: 'done',
         quote: 'I also finished the vendor review last week.',
       },
     ],
   },
   {
-    title: 'Joe and Jenny standup',
+    title: 'Jordan and Jamie standup',
     people: [
-      { label: 'Joe Park', quote: 'Morning Joe', attended: false },
-      { label: 'Jenny Kim', quote: 'Morning Jenny', attended: false },
+      { label: 'Jordan Sample', quote: 'Morning Jordan', attended: false },
+      { label: 'Jamie Fixture', quote: 'Morning Jamie', attended: false },
     ],
     relations: [],
     commitments: [],
   },
   {
-    // Nobody says whom Priya reports to: the e2e sets it by hand.
-    title: 'Data platform review with Mark Chen',
+    // Nobody says whom Quinn reports to: the e2e sets it by hand.
+    title: 'Data platform review with Riley Demo',
     people: [
-      { label: 'Mark Chen', quote: 'The backlog is down to twelve items, Mark.', attended: false },
-      { label: 'Priya Shah', quote: 'Thanks for joining, Priya.', attended: false },
+      { label: 'Riley Demo', quote: 'The backlog is down to twelve items, Riley.', attended: false },
+      { label: 'Quinn Testcase', quote: 'Thanks for joining, Quinn.', attended: false },
     ],
     relations: [],
     commitments: [],
@@ -74,9 +74,9 @@ export const GRAPH_MEETINGS: readonly KvoxScenarioMeeting[] = [
 
 /** The reference questions (the epic's v1 acceptance bar), and the one the manual edit answers. */
 export const QUESTIONS = {
-  actionItems: 'What are the action items from Joe?',
-  bossMeetings: "What meetings have we had with Jenny's boss?",
-  manualBossMeetings: "What meetings have we had with Priya's boss?",
+  actionItems: 'What are the action items from Jordan?',
+  bossMeetings: "What meetings have we had with Jamie's boss?",
+  manualBossMeetings: "What meetings have we had with Quinn's boss?",
 } as const;
 
 interface WireMessage {

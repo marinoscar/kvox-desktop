@@ -10,6 +10,7 @@ import yauzl from 'yauzl';
 import yazl from 'yazl';
 
 import type { DataFolder } from '../data-folder.js';
+import { renamedDomainMigrations } from '../legacy-database.js';
 
 // =============================================================================
 // Export data / Restore: the `.kvoxbackup` archive (marinoscar/kvox#583)
@@ -277,6 +278,9 @@ export async function stageRestore(folder: DataFolder, archive: string, knownMig
       if (name !== MANIFEST && !listed.has(name)) throw new BackupInvalidError(`"${name}" is not in the manifest`);
     }
     if (!listed.has(DB_DUMP)) throw new BackupInvalidError('the database dump is missing');
+    if (renamedDomainMigrations(manifest.migrations, knownMigrations).length > 0) {
+      throw new BackupInvalidError('it was made by KVox Desktop 0.1.0-rc.14 or earlier, whose database this version cannot open');
+    }
     const known = new Set(knownMigrations);
     const unknown = manifest.migrations.filter((name) => !known.has(name));
     if (unknown.length > 0) {

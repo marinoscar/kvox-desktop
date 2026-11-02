@@ -18,7 +18,7 @@ import { goTo } from './rail';
 
 /** The text every mock answer carries, with the marker the specs look for. */
 export const MOCK_NOTE_TEXT =
-  '# Meeting notes\n\nGenerated on this device through the configured AI provider.\n\n- Joe sends the budget by Friday.\n- Desktop smoke marker: zebracorn.\n';
+  '# Meeting notes\n\nGenerated on this device through the configured AI provider.\n\n- Jordan sends the budget by Friday.\n- Desktop smoke marker: zebracorn.\n';
 
 /** The phrase the plaintext-key confirmation asks for (DataPrivacyCard). */
 const PLAINTEXT_PHRASE = 'PLAINTEXT KEYS';

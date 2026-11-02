@@ -50,8 +50,12 @@ export const desktopNotesRoutes: readonly KvoxRouteDef[] = kvoxNotesRoutes
     return route;
   });
 
-/** The graph routes (Knowledge, the explorer, the overview, Review, the Review Queue, imports) and Ask's. */
+/**
+ * The graph routes (Knowledge, the explorer, the overview, Review, the Review Queue, imports) and Ask's.
+ * `/settings/knowledge-graph` is a Settings card, mounted with the settings pages (`settings/routes.tsx`)
+ * whether or not connected knowledge is on, so the graph slice's own entry for it is left out here.
+ */
 export const desktopKnowledgeRoutes: readonly KvoxRouteDef[] = [
-  ...kvoxGraphRoutes.map((route) => (route.path === '/graph/entities/:id' ? { ...route, Component: GraphEntityPageWithAsk } : route)),
+  ...kvoxGraphRoutes.filter((route) => !route.path.startsWith('/settings/')).map((route) => (route.path === '/graph/entities/:id' ? { ...route, Component: GraphEntityPageWithAsk } : route)),
   ...kvoxAskRoutes,
 ];

@@ -34,7 +34,7 @@ editedBy: "Dana Example"
 
 ## Action items
 
-1. Lee Ortiz sends the release checklist by Friday.
+1. Casey Mockwell sends the release checklist by Friday.
 2. Dana Example books the review.
 
 > Round-trip marker: tapirglow.

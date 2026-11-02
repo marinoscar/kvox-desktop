@@ -202,14 +202,15 @@ Ask answers from the graph through the packages' tools (`search`, `list_commitme
 
 | Question | How it is answered |
 |---|---|
-| What are the action items from Joe? | `search(Joe)` → `list_commitments(Joe, owned_by, open)`, citing the meeting where he committed |
-| What meetings have we had with Jenny's boss? | `search(Jenny)` → `neighbors(Jenny, REPORTS_TO)` → `timeline(boss, meeting)`, citing the reporting line and the meetings |
+| What are the action items from Jordan? | `search(Jordan)` → `list_commitments(Jordan, owned_by, open)`, citing the meeting where he committed |
+| What meetings have we had with Jamie's boss? | `search(Jamie)` → `neighbors(Jamie, REPORTS_TO)` → `timeline(boss, meeting)`, citing the reporting line and the meetings |
 
 Host duties Desktop carries for the graph:
 
 - The system `ai` namespace declares `graphEnabled`, **on** by default here, and `reasoningEffort`. Settings > **Connected knowledge** switches it (`GET`/`PATCH /api/desktop/knowledge`). Off, KVox makes no graph or Ask call to the AI provider (the graph's AI routes answer 409 `graph_disabled`), hides Knowledge, Review and Ask, and keeps the graph you already have. The window mirrors the switch in `KvoxWebHost.features()`.
 - An hourly housekeeping timer (`src/server/housekeeping.ts`) calls the four enqueuers, because every slice runs with `schedules: false`.
-- The RDF peers (`n3`, `jsonld`, `rdf-validate-shacl`) and the `graphology` layout peers are installed.
+- `GET`/`PATCH /api/user-settings` (`src/server/user-settings.controller.ts`) serves the per-user settings document kvox-web reads and writes the `graph` preferences through (the Knowledge graph settings page, "You in the graph", the explorer's saved lenses), with `If-Match` carrying its version. On the web it is the platform's route; here it is `user_settings` through KVOX_SETTINGS, merged by kvox-api's `mergeGraphPreferences`. The preference `review.autoCommitSafeRows` (on by default since kvox 0.1.0-next.23) commits a proposal's confident rows without a visit to the review sheet.
+- The RDF peers (`n3`, `jsonld`, `rdf-validate-shacl`) and the `graphology` layout peers (the server's) are installed, and `@antv/g6`, the explorer canvas's renderer peer (Canvas, main thread, no worker, so the window's CSP is unchanged).
 - The SHACL validation of a graph import runs in a utility process (`src/main/shacl-validate.ts`, wired through `shacl.run`). The RunAsNode fuse is off, so the package's default of spawning the binary as Node cannot work.
 
 ## Settings
@@ -221,6 +222,8 @@ Host duties Desktop carries for the graph:
 | AI provider | `/settings/ai` | Choose one of three providers, then set up the one chosen ([AI providers](#ai-providers)) |
 | Connected knowledge | `/settings/knowledge` | The `ai.graphEnabled` switch |
 | Note Templates | `/settings/note-templates` | The notes slice's templates page (a card of the hub, not a rail row, as on web) |
+| Semantic search on this device | `/settings/search` | The on-device embedding model and its index |
+| Knowledge graph | `/settings/knowledge-graph` | The graph slice's own card and page (`kvoxGraphUserSettingsSections`, `UserKnowledgeGraphPage`): automatic extraction, "You in the graph", resolution thresholds, batch review (auto-commit), domains and attributes. Mounted with the settings pages, so it opens even while connected knowledge is off; the package's `graph:write` gate is dropped because the one local user holds it |
 | Data and privacy | `/settings/data` | The data folder, Export data and Restore, how saved keys are protected |
 | Updates | `/settings/updates` | The opt-in "Check for updates" |
 
@@ -497,13 +500,15 @@ Pin the `@marinoscar/kvox-*` packages to exact versions and bump them together; 
 
 | Package | Version | Used for |
 |---|---|---|
-| `@marinoscar/kvox-ai`, `-api`, `-contract`, `-db` | `0.1.0-next.3` | The domain: AI harness, API slices, wire schemas, schema and migrations |
-| `@marinoscar/kvox-web` | `0.1.0-next.3` | The screens, and `./brand`: theme, Inter, tokens, icon mark |
-| `@marinoscar/platform-web` | `0.1.0-next.7` | `ShellRoot` (theme mode), `SettingsHub`, the shared AI key cards |
-| `@marinoscar/platform-db` | `0.1.0-next.6` | Platform schema and migrations |
-| `@marinoscar/platform-ai-providers` | `0.1.0-next.6` | The OpenAI adapters |
+| `@marinoscar/kvox-ai`, `-api`, `-contract`, `-db` | `0.1.0-next.23` | The domain: AI harness, API slices, wire schemas, schema and migrations |
+| `@marinoscar/kvox-web` | `0.1.0-next.23` | The screens, and `./brand`: theme, Inter, tokens, icon mark |
+| `@marinoscar/platform-web` | `0.1.0-next.20` | `ShellRoot` (theme mode), `SettingsHub`, the shared AI key cards |
+| `@marinoscar/platform-contract` | `0.1.0-next.20` | The wire shapes and the pure `timezone` entry kvox-api imports |
+| `@marinoscar/platform-db` | `0.1.0-next.20` | Platform schema and migrations |
+| `@marinoscar/platform-ai-providers` | `0.1.0-next.20` | The OpenAI adapters |
+| `@antv/g6` | `^5.1.1` | kvox-web's graph canvas renderer (optional peer of `graph/ui`) |
 
-`@marinoscar/kvox-web@0.1.0-next.3` peers on `@marinoscar/platform-web@0.1.0-next.6` exactly, so `package.json` has an `overrides` entry that keeps one copy at `0.1.0-next.7`; drop it when kvox-web's peer moves. All the kvox packages come from npm (published with provenance on the `next` dist-tag). Bump the five together:
+The kvox release pins its platform peers exactly; the `@marinoscar/platform-*` pins here are those versions. All the kvox packages come from npm (published with provenance on the `next` dist-tag). Bump the five together:
 
 ```bash
 npm install --save-exact @marinoscar/kvox-ai@<v> @marinoscar/kvox-api@<v> @marinoscar/kvox-contract@<v> @marinoscar/kvox-db@<v> @marinoscar/kvox-web@<v>
@@ -514,7 +519,12 @@ The release procedure is `docs/runbooks/release-kvox-packages.md` in marinoscar/
 
 ## Database migrations
 
-`npm run prepare:db` (run by `dev` and `build`) writes `prisma/` (git-ignored): `platform db sync`, `platform db compose`, `kvox-db sync --names after-host`, compose again, `prisma generate`. The platform installer gets a fixed `--timestamp`, so the same package versions always produce the same migration directory names. Open point (marinoscar/kvox#595): an upgrade that adds a platform migration shifts the `after-host` names of the domain migrations, which an existing user database has already recorded; this needs a decision in the packages before the first release that ships to users.
+`npm run prepare:db` (run by `dev` and `build`) writes `prisma/` (git-ignored): `platform db sync`, `platform db compose`, `kvox-db sync --names stable`, compose again, `prisma generate`.
+
+- **Platform migrations** get a fixed `--timestamp` (`2026-01-01T00:00:00Z`), so the same package versions always produce the same directory names, and a platform upgrade only appends names after the existing ones.
+- **Domain migrations** use kvox-db's `stable` names: `<the package id's timestamp>_kvox_<slug>` (`20260914130000_add_transcripts` is installed as `20260914130000_kvox_add_transcripts`). A name depends on the migration alone, never on how many platform migrations exist, so no later release renames one. `tests/unit/legacy-database.test.ts` pins this.
+
+**A database from 0.1.0-rc.14 or earlier.** Those builds used the deprecated `after-host` names (`<one second after the newest platform migration>_kvox_<slug>`), which moved every time a platform release added a migration; such a database would stop `prisma migrate deploy` with P3018. It is not carried forward. At start-up, before `migrate deploy`, the server reads `_prisma_migrations`: when it records a domain migration under a name this build does not ship, while this build ships the same migration (same slug) under its stable name, the database is from the old naming (`src/server/legacy-database.ts`). The server then closes it, renames the database folder `<userData>/db` to a sibling `<userData>/db.legacy-<UTC yyyymmdd-hhmmss>` (never deleted; a counter is appended if the name is taken), starts a new empty database, logs one line with the kept folder's path, and shows an OS notification: "Your knowledge base was reset for this update. The previous database is kept at …". Only the database folder moves: the vault, `logs/`, `secrets.bin` (provider keys), `settings.json` and the note files of the user's libraries stay where they are; the libraries themselves were rows of the old database, so the user adds the folders again and the notes are imported anew. A `.kvoxbackup` made by such a build is refused by Restore with a message saying so. A database from a newer build (a migration this build does not know at all) is not touched.
 
 ## Roadmap
 
@@ -532,8 +542,8 @@ Package-side work in the kvox repository: #570 (PR #575), #571, #572, #573, #578
 
 Version 1 acceptance bar: the app answers both reference questions from imported meetings.
 
-1. "What are the action items from Joe?"
-2. "What meetings have we had with Jenny's boss?"
+1. "What are the action items from Jordan?"
+2. "What meetings have we had with Jamie's boss?"
 
 ## More
 

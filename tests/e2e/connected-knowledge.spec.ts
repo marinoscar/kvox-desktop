@@ -17,7 +17,8 @@ import { startOpenAiCompatibleMock, type OpenAiCompatibleMock } from '../support
 // connected knowledge starts on; switching it off hides Knowledge, Review and
 // Ask, sends a knowledge link back to the notes, makes Ask answer 409
 // `graph_disabled` without a call to the provider, and survives a restart;
-// switching it on brings the destinations and the Ask composer back.
+// switching it on brings the destinations and the Ask composer back. The
+// Knowledge graph card (the graph slice's preferences page) opens while it is off.
 // =============================================================================
 
 const ROOT = resolve(__dirname, '..', '..');
@@ -62,7 +63,7 @@ async function askOnce(page: Page): Promise<{ status: number; body: string }> {
     const response = await fetch(`${baseUrl}/api/ask/conversations/${id}/messages`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ content: 'What are the action items from Joe?' }),
+      body: JSON.stringify({ content: 'What are the action items from Jordan?' }),
     });
     return { status: response.status, body: await response.text() };
   });
@@ -110,6 +111,11 @@ test('connected knowledge can be switched off and on in Settings, and stays as s
   await app!.close();
   page = await launch();
   await expectKnowledgeLinks(page, false);
+  // ---- Settings > Knowledge graph opens even while it is off -----------------
+  await openSettingsCard(page, 'Knowledge graph');
+  await expect(page.getByRole('heading', { name: 'You in the graph', level: 2 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Batch review', level: 2 })).toBeVisible();
+
   toggle = await openSettings(page);
   await expect(toggle).not.toBeChecked();
 

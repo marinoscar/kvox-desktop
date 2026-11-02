@@ -19,6 +19,10 @@ import { join } from 'node:path';
 //                    working directory), runtime/<version>/ (the downloaded runtime).
 //                    NEVER in a backup or a data export, never touched by a restore
 //
+// `db.legacy-<timestamp>/` is a database from 0.1.0-rc.14 or earlier, moved
+// aside at start-up and kept for the user (`legacy-database.ts`); the app never
+// opens or deletes it.
+//
 // Transient, during a restore only: `restore-staging/` (an archive being
 // checked), `restore-pending/` (checked, applied at the next server start) and
 // `restore-previous/` (what the restore replaced, removed once the restored

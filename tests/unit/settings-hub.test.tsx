@@ -3,8 +3,12 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { kvoxGraphRoutes, kvoxGraphUserSettingsSections } from '@marinoscar/kvox-web/graph/ui';
 import { settingsPageTitle, visibleSettingsSections } from '@marinoscar/platform-web/settings/ui';
 
+import { desktopKnowledgeRoutes } from '../../src/renderer/src/routes';
+
+import { LOCAL_USER_PERMISSIONS } from '../../src/server/permissions';
 import { desktopSettingsRoutes } from '../../src/renderer/src/settings/routes';
 import {
   DESKTOP_SETTINGS_PATH,
@@ -27,12 +31,13 @@ const cards = DESKTOP_SETTINGS_SECTIONS.flatMap((section) => section.cards);
 const routePaths = desktopSettingsRoutes.map((route) => route.path);
 
 describe('the Desktop settings registry', () => {
-  it('lists the six cards in the issue order, grouped', () => {
+  it('lists the seven cards in the issue order, grouped', () => {
     expect(cards.map((card) => card.title)).toEqual([
       'AI provider',
       'Connected knowledge',
       'Note Templates',
       'Semantic search on this device',
+      'Knowledge graph',
       'Data and privacy',
       'Updates',
     ]);
@@ -41,6 +46,7 @@ describe('the Desktop settings registry', () => {
       '/settings/knowledge',
       '/settings/note-templates',
       '/settings/search',
+      '/settings/knowledge-graph',
       '/settings/data',
       '/settings/updates',
     ]);
@@ -78,8 +84,27 @@ describe('the Desktop settings registry', () => {
     expect(settingsPageTitle(DESKTOP_SETTINGS_SECTIONS, DESKTOP_SETTINGS_PATH, DESKTOP_SETTINGS_TITLE, '/notes')).toBeNull();
   });
 
-  it('draws its own heading only on the notes slice\'s templates page', () => {
-    expect(desktopSettingsRoutes.filter((route) => route.ownHeading).map((route) => route.path)).toEqual(['/settings/note-templates']);
+  it('draws its own heading only on the slices\' own pages (note templates, knowledge graph)', () => {
+    expect(desktopSettingsRoutes.filter((route) => route.ownHeading).map((route) => route.path)).toEqual([
+      '/settings/note-templates',
+      '/settings/knowledge-graph',
+    ]);
+  });
+
+  it('reuses the graph slice\'s Knowledge graph card and page, without a gate the local user always passes', () => {
+    const [packageCard] = kvoxGraphUserSettingsSections.knowledge;
+    const card = cards.find((c) => c.path === '/settings/knowledge-graph');
+    expect(card).toBeDefined();
+    expect(card?.title).toBe(packageCard?.title);
+    expect(card?.description).toBe(packageCard?.description);
+    expect(card?.Icon).toBe(packageCard?.Icon);
+    // The package gates it on graph:write; the one local user holds it, so the card drops the gate.
+    expect(packageCard?.permission).toBe('graph:write');
+    expect(LOCAL_USER_PERMISSIONS).toContain('graph:write');
+    // Its page is the package's own lazy page, mounted here and not again with the graph routes.
+    const packageRoute = kvoxGraphRoutes.find((route) => route.path === '/settings/knowledge-graph');
+    expect(desktopSettingsRoutes.find((route) => route.path === '/settings/knowledge-graph')?.Component).toBe(packageRoute?.Component);
+    expect(desktopKnowledgeRoutes.some((route) => route.path.startsWith('/settings/'))).toBe(false);
   });
 });
 

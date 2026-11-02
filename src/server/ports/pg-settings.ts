@@ -40,7 +40,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** RFC 7386: objects merge key by key, any other value replaces. */
-function mergePatch(target: unknown, patch: unknown): unknown {
+export function mergePatch(target: unknown, patch: unknown): unknown {
   if (!isPlainObject(patch)) return patch;
   const base = isPlainObject(target) ? { ...target } : {};
   for (const [key, value] of Object.entries(patch)) {
@@ -148,6 +148,56 @@ export class PgSettings implements KvoxSettingsPort {
       }
       if (attempt >= 1) throw new ConflictException(`Settings "${name}" changed while they were being saved`);
     }
+  }
+
+  /** Whether `name` is a declared user namespace (the `/api/user-settings` route accepts only these). */
+  hasUserNamespace(name: string): boolean {
+    return this.namespaces.has(`user:${name}`);
+  }
+
+  /**
+   * The user's whole settings document as stored (sparse: a namespace nobody
+   * wrote is absent) and its row version (0 when there is no row yet). Read by
+   * `/api/user-settings` (`user-settings.controller.ts`).
+   */
+  async readUserDocument(userId: string): Promise<{ value: Record<string, unknown>; version: number }> {
+    const row = await this.prisma.userSettings.findUnique({ where: { userId } });
+    return { value: isPlainObject(row?.value) ? { ...row.value } : {}, version: row?.version ?? 0 };
+  }
+
+  /**
+   * Writes the given user namespaces (each already merged by the caller; `undefined`
+   * removes the namespace) over the document at `version`. Each value must pass its
+   * namespace's schema. A writer that moved the row since `version` is a 409.
+   */
+  async writeUserNamespaces(
+    userId: string,
+    values: Record<string, unknown>,
+    version: number,
+  ): Promise<{ value: Record<string, unknown>; version: number }> {
+    const current = await this.readUserDocument(userId);
+    if (current.version !== version) throw new ConflictException(`User settings are at version ${current.version}, not ${version}`);
+    const next = { ...current.value };
+    for (const [name, value] of Object.entries(values)) {
+      const def = this.declared('user', name);
+      if (value === undefined) delete next[name];
+      else next[name] = def.schema.parse(value);
+    }
+    const stored = next as Prisma.InputJsonValue;
+    if (version > 0) {
+      const updated = await this.prisma.userSettings.updateMany({ where: { userId, version }, data: { value: stored, version: version + 1 } });
+      if (updated.count === 0) throw new ConflictException('User settings changed while they were being saved');
+    } else {
+      try {
+        await this.prisma.userSettings.create({ data: { userId, value: stored, version: 1 } });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          throw new ConflictException('User settings changed while they were being saved');
+        }
+        throw error;
+      }
+    }
+    return { value: next, version: version + 1 };
   }
 
   /**
