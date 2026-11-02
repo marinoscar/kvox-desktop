@@ -498,13 +498,15 @@ Pin the `@marinoscar/kvox-*` packages to exact versions and bump them together; 
 
 | Package | Version | Used for |
 |---|---|---|
-| `@marinoscar/kvox-ai`, `-api`, `-contract`, `-db` | `0.1.0-next.3` | The domain: AI harness, API slices, wire schemas, schema and migrations |
-| `@marinoscar/kvox-web` | `0.1.0-next.3` | The screens, and `./brand`: theme, Inter, tokens, icon mark |
-| `@marinoscar/platform-web` | `0.1.0-next.7` | `ShellRoot` (theme mode), `SettingsHub`, the shared AI key cards |
-| `@marinoscar/platform-db` | `0.1.0-next.6` | Platform schema and migrations |
-| `@marinoscar/platform-ai-providers` | `0.1.0-next.6` | The OpenAI adapters |
+| `@marinoscar/kvox-ai`, `-api`, `-contract`, `-db` | `0.1.0-next.23` | The domain: AI harness, API slices, wire schemas, schema and migrations |
+| `@marinoscar/kvox-web` | `0.1.0-next.23` | The screens, and `./brand`: theme, Inter, tokens, icon mark |
+| `@marinoscar/platform-web` | `0.1.0-next.20` | `ShellRoot` (theme mode), `SettingsHub`, the shared AI key cards |
+| `@marinoscar/platform-contract` | `0.1.0-next.20` | The wire shapes and the pure `timezone` entry kvox-api imports |
+| `@marinoscar/platform-db` | `0.1.0-next.20` | Platform schema and migrations |
+| `@marinoscar/platform-ai-providers` | `0.1.0-next.20` | The OpenAI adapters |
+| `@antv/g6` | `^5.1.1` | kvox-web's graph canvas renderer (optional peer of `graph/ui`) |
 
-`@marinoscar/kvox-web@0.1.0-next.3` peers on `@marinoscar/platform-web@0.1.0-next.6` exactly, so `package.json` has an `overrides` entry that keeps one copy at `0.1.0-next.7`; drop it when kvox-web's peer moves. All the kvox packages come from npm (published with provenance on the `next` dist-tag). Bump the five together:
+The kvox release pins its platform peers exactly; the `@marinoscar/platform-*` pins here are those versions. All the kvox packages come from npm (published with provenance on the `next` dist-tag). Bump the five together:
 
 ```bash
 npm install --save-exact @marinoscar/kvox-ai@<v> @marinoscar/kvox-api@<v> @marinoscar/kvox-contract@<v> @marinoscar/kvox-db@<v> @marinoscar/kvox-web@<v>
@@ -515,7 +517,7 @@ The release procedure is `docs/runbooks/release-kvox-packages.md` in marinoscar/
 
 ## Database migrations
 
-`npm run prepare:db` (run by `dev` and `build`) writes `prisma/` (git-ignored): `platform db sync`, `platform db compose`, `kvox-db sync --names after-host`, compose again, `prisma generate`. The platform installer gets a fixed `--timestamp`, so the same package versions always produce the same migration directory names. Open point (marinoscar/kvox#595): an upgrade that adds a platform migration shifts the `after-host` names of the domain migrations, which an existing user database has already recorded; this needs a decision in the packages before the first release that ships to users.
+`npm run prepare:db` (run by `dev` and `build`) writes `prisma/` (git-ignored): `platform db sync`, `platform db compose`, `kvox-db sync --names after-host`, compose again, `prisma generate`. The platform installer gets a fixed `--timestamp`, so the same package versions always produce the same migration directory names. Open point (marinoscar/kvox#595): an upgrade that adds a platform migration shifts the `after-host` names of the domain migrations, which an existing user database has already recorded; this needs a decision in the packages before the first release that ships to users. The bump to kvox `0.1.0-next.23` and platform `0.1.0-next.20` is such an upgrade: platform migrations 0038 to 0040 move every domain name by three (`20260101000037_kvox_add_transcripts` becomes `20260101000040_kvox_add_transcripts`), so a database created by an earlier build stops at `prisma migrate deploy` with P3018 (`type "TranscriptStatus" already exists`). kvox-db now deprecates `after-host` for `--names stable`; moving to it renames the domain migrations once more, so it needs the same decision for existing databases.
 
 ## Roadmap
 
