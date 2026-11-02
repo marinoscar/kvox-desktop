@@ -222,6 +222,8 @@ Host duties Desktop carries for the graph:
 | AI provider | `/settings/ai` | Choose one of three providers, then set up the one chosen ([AI providers](#ai-providers)) |
 | Connected knowledge | `/settings/knowledge` | The `ai.graphEnabled` switch |
 | Note Templates | `/settings/note-templates` | The notes slice's templates page (a card of the hub, not a rail row, as on web) |
+| Semantic search on this device | `/settings/search` | The on-device embedding model and its index |
+| Knowledge graph | `/settings/knowledge-graph` | The graph slice's own card and page (`kvoxGraphUserSettingsSections`, `UserKnowledgeGraphPage`): automatic extraction, "You in the graph", resolution thresholds, batch review (auto-commit), domains and attributes. Mounted with the settings pages, so it opens even while connected knowledge is off; the package's `graph:write` gate is dropped because the one local user holds it |
 | Data and privacy | `/settings/data` | The data folder, Export data and Restore, how saved keys are protected |
 | Updates | `/settings/updates` | The opt-in "Check for updates" |
 
