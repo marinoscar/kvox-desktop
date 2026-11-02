@@ -2,7 +2,7 @@
   "name": "kvox-desktop",
   "productName": "KVox",
   "desktopName": "kvox-desktop.desktop",
-  "version": "0.1.0-rc.13",
+  "version": "0.1.0-rc.14",
   "private": true,
   "description": "KVox Desktop: turn the notes you already have into a personal knowledge graph you can ask questions of. Offline-first. A host of the @marinoscar/kvox-* packages.",
   "license": "MIT",
