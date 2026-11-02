@@ -63,7 +63,7 @@ async function askOnce(page: Page): Promise<{ status: number; body: string }> {
     const response = await fetch(`${baseUrl}/api/ask/conversations/${id}/messages`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ content: 'What are the action items from Joe?' }),
+      body: JSON.stringify({ content: 'What are the action items from Jordan?' }),
     });
     return { status: response.status, body: await response.text() };
   });

@@ -101,13 +101,13 @@ describe('backup and restore', () => {
       await store.put({ ownerId: LOCAL_USER_ID, key: `notes/doc-${i}/${i}.bin`, body: randomBytes(50_000 + i), contentType: 'application/octet-stream', managedBy: 'notes' });
     }
     const notes = [
-      await a.prisma.note.create({ data: { ownerId: LOCAL_USER_ID, title: 'Budget review', sourceType: 'document', body: 'Joe sends the budget by Friday.' } }),
-      await a.prisma.note.create({ data: { ownerId: LOCAL_USER_ID, title: 'Planning', sourceType: 'document', body: 'Jenny reviews the plan.' } }),
+      await a.prisma.note.create({ data: { ownerId: LOCAL_USER_ID, title: 'Budget review', sourceType: 'document', body: 'Jordan sends the budget by Friday.' } }),
+      await a.prisma.note.create({ data: { ownerId: LOCAL_USER_ID, title: 'Planning', sourceType: 'document', body: 'Jamie reviews the plan.' } }),
     ];
     // An entity needs its evidence in the same transaction (the graph's no-orphans invariant).
     const entities = [
-      { id: randomUUID(), label: 'Joe', quote: 'Joe sends the budget' },
-      { id: randomUUID(), label: 'Jenny', quote: 'Jenny reviews the plan' },
+      { id: randomUUID(), label: 'Jordan', quote: 'Jordan sends the budget' },
+      { id: randomUUID(), label: 'Jamie', quote: 'Jamie reviews the plan' },
     ];
     for (const [i, entity] of entities.entries()) {
       await a.prisma.$transaction([

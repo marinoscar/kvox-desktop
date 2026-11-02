@@ -158,7 +158,7 @@ describe('importLocalFile against the Desktop server', () => {
     expect(transcript.status).toBe('ready');
     expect(transcript.hasAudio).toBe(false);
     expect(new Date(transcript.recordedAt).toISOString()).toBe('2026-03-04T15:00:00.000Z');
-    expect(transcript.speakers.map((speaker) => speaker.displayName)).toEqual(['Dana Example', 'Lee Ortiz', 'Speaker C']);
+    expect(transcript.speakers.map((speaker) => speaker.displayName)).toEqual(['Dana Example', 'Casey Mockwell', 'Speaker C']);
   });
 
   it('imports a note exported from KVox web with the same title and body, and exports it back', async () => {

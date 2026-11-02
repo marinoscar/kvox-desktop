@@ -202,8 +202,8 @@ Ask answers from the graph through the packages' tools (`search`, `list_commitme
 
 | Question | How it is answered |
 |---|---|
-| What are the action items from Joe? | `search(Joe)` → `list_commitments(Joe, owned_by, open)`, citing the meeting where he committed |
-| What meetings have we had with Jenny's boss? | `search(Jenny)` → `neighbors(Jenny, REPORTS_TO)` → `timeline(boss, meeting)`, citing the reporting line and the meetings |
+| What are the action items from Jordan? | `search(Jordan)` → `list_commitments(Jordan, owned_by, open)`, citing the meeting where he committed |
+| What meetings have we had with Jamie's boss? | `search(Jamie)` → `neighbors(Jamie, REPORTS_TO)` → `timeline(boss, meeting)`, citing the reporting line and the meetings |
 
 Host duties Desktop carries for the graph:
 
@@ -542,8 +542,8 @@ Package-side work in the kvox repository: #570 (PR #575), #571, #572, #573, #578
 
 Version 1 acceptance bar: the app answers both reference questions from imported meetings.
 
-1. "What are the action items from Joe?"
-2. "What meetings have we had with Jenny's boss?"
+1. "What are the action items from Jordan?"
+2. "What meetings have we had with Jamie's boss?"
 
 ## More
 

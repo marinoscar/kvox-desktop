@@ -155,7 +155,7 @@ test('Copilot: consent, runtime download, sign-in, Ask and a note on Copilot, si
   await page.waitForURL(/#\/ask/);
   await expect(railItem(page, 'Ask').getByTestId('ask-unavailable')).toHaveCount(0);
   const question = page.getByPlaceholder('Ask about your meetings, people and projects…');
-  await question.fill('What does Joe owe us?');
+  await question.fill('What does Jordan owe us?');
   await page.getByRole('button', { name: 'Send' }).click();
   await page.waitForURL(/#\/ask\/[0-9a-f-]{36}/);
   // One `search` step through the tool bridge, then the answer, all on the mock Copilot.
@@ -172,7 +172,7 @@ test('Copilot: consent, runtime download, sign-in, Ask and a note on Copilot, si
   await page.getByLabel('Choose a document').setInputFiles({
     name: 'standup.md',
     mimeType: 'text/markdown',
-    buffer: Buffer.from('# Stand-up\n\nJoe will send the budget by Friday.\nJenny reviews the plan.\n'),
+    buffer: Buffer.from('# Stand-up\n\nJordan will send the budget by Friday.\nJamie reviews the plan.\n'),
   });
   // A picked document is kept as a note by default; this test generates one from a template.
   await page.getByRole('radio', { name: /Rewrite it with a template/ }).check();

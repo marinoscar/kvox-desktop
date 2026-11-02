@@ -127,7 +127,7 @@ function desktopAi(
 async function collectText(ai: DesktopAi): Promise<string> {
   const target = await ai.port.resolveTask(CTX, 'notes.generate');
   let text = '';
-  for await (const event of ai.port.generateText(CTX, { target, system: 'Write notes.', user: 'Joe sends the budget by Friday.' })) {
+  for await (const event of ai.port.generateText(CTX, { target, system: 'Write notes.', user: 'Jordan sends the budget by Friday.' })) {
     if (event.type === 'delta') text += event.text;
   }
   return text;
@@ -183,7 +183,7 @@ describe('KVOX_AI conformance', () => {
 describe('DesktopAi over the platform adapters', () => {
   let providers: DesktopAiAdapters;
   let mock: OpenAiCompatibleMock;
-  const NOTE = '# Stand-up\n\n- Joe sends the budget by Friday.\n';
+  const NOTE = '# Stand-up\n\n- Jordan sends the budget by Friday.\n';
 
   beforeAll(async () => {
     providers = await loadProviderAdapters();
@@ -886,7 +886,7 @@ describe('GitHub Copilot as a provider', () => {
     const tools = [{ name: 'search', description: 'Searches the meetings.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'], additionalProperties: false } }];
     const history = [
       { role: 'system' as const, content: 'Answer from the tools.' },
-      { role: 'user' as const, content: 'Who is Joe?' },
+      { role: 'user' as const, content: 'Who is Jordan?' },
     ];
     const run = async (messages: Parameters<typeof ai.port.chat>[1]['messages']) => {
       const events = [];
@@ -894,23 +894,23 @@ describe('GitHub Copilot as a provider', () => {
       return events;
     };
 
-    transport.queue({ kind: 'toolCalls', calls: [{ name: 'search', arguments: { query: 'Joe' }, toolCallId: 'call-1' }] });
-    transport.queue({ kind: 'answer', text: 'Joe sends the budget by Friday.' });
+    transport.queue({ kind: 'toolCalls', calls: [{ name: 'search', arguments: { query: 'Jordan' }, toolCallId: 'call-1' }] });
+    transport.queue({ kind: 'answer', text: 'Jordan sends the budget by Friday.' });
     const first = await run(history);
-    expect(first.filter((event) => event.type === 'tool_call')).toEqual([{ type: 'tool_call', id: 'call-1', name: 'search', arguments: { query: 'Joe' } }]);
+    expect(first.filter((event) => event.type === 'tool_call')).toEqual([{ type: 'tool_call', id: 'call-1', name: 'search', arguments: { query: 'Jordan' } }]);
     expect(ai.copilot.providerAdapter?.bridge.heldSessions()).toBe(1);
 
     const second = await run([
       ...history,
-      { role: 'assistant', content: null, toolCalls: [{ id: 'call-1', name: 'search', arguments: { query: 'Joe' } }] },
-      { role: 'tool', toolCallId: 'call-1', content: '{"hits":["Joe: budget by Friday"]}' },
+      { role: 'assistant', content: null, toolCalls: [{ id: 'call-1', name: 'search', arguments: { query: 'Jordan' } }] },
+      { role: 'tool', toolCallId: 'call-1', content: '{"hits":["Jordan: budget by Friday"]}' },
     ]);
-    expect(second.flatMap((event) => (event.type === 'delta' ? [event.text] : [])).join('')).toBe('Joe sends the budget by Friday.');
+    expect(second.flatMap((event) => (event.type === 'delta' ? [event.text] : [])).join('')).toBe('Jordan sends the budget by Friday.');
     const sessions = transport.sessions();
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({ continuations: 1, deleted: true });
     expect(sessions[0]?.config.model).toBe(GPT);
-    expect(sessions[0]?.toolRuns).toEqual([{ toolCallId: 'call-1', name: 'search', arguments: { query: 'Joe' }, output: '{"hits":["Joe: budget by Friday"]}' }]);
+    expect(sessions[0]?.toolRuns).toEqual([{ toolCallId: 'call-1', name: 'search', arguments: { query: 'Jordan' }, output: '{"hits":["Jordan: budget by Friday"]}' }]);
     expect(mock.requests).toHaveLength(0);
   });
 
@@ -921,7 +921,7 @@ describe('GitHub Copilot as a provider', () => {
     const target = await ai.port.resolveTask(askCtx, 'ask.respond');
     const tools = [{ name: 'search', description: 'Searches the meetings.', parameters: { type: 'object', properties: {}, additionalProperties: false } }];
     transport.queue({ kind: 'toolCalls', calls: [{ name: 'search', toolCallId: 'call-1' }] });
-    for await (const _event of ai.port.chat(askCtx, { target, messages: [{ role: 'user', content: 'Who is Joe?' }], tools, toolChoice: 'auto' })) {
+    for await (const _event of ai.port.chat(askCtx, { target, messages: [{ role: 'user', content: 'Who is Jordan?' }], tools, toolChoice: 'auto' })) {
       // drain the step
     }
     const adapter = ai.copilot.providerAdapter;

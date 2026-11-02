@@ -130,7 +130,7 @@ describe('the graph and Ask on the Desktop server', () => {
     const conversation = await api<{ id: string }>('/ask/conversations', { method: 'POST', body: '{}' });
     expect(conversation.status).toBe(201);
     const ask = () =>
-      api<unknown>(`/ask/conversations/${conversation.body.id}/messages`, { method: 'POST', body: JSON.stringify({ content: 'Who is Joe?' }) });
+      api<unknown>(`/ask/conversations/${conversation.body.id}/messages`, { method: 'POST', body: JSON.stringify({ content: 'Who is Jordan?' }) });
     expect((await api('/desktop/knowledge')).body).toEqual({ graphEnabled: true });
 
     const off = await api('/desktop/knowledge', { method: 'PATCH', body: JSON.stringify({ graphEnabled: false }) });

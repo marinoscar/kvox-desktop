@@ -21,10 +21,10 @@ import type { CopilotHost } from './copilot-host.js';
 // =============================================================================
 
 /** The text every note generated through this host carries (the spec looks for it). */
-export const E2E_COPILOT_NOTE_TEXT = '# Meeting notes\n\n- Joe sends the budget by Friday.\n- Generated on Copilot: copilotzebra.\n';
+export const E2E_COPILOT_NOTE_TEXT = '# Meeting notes\n\n- Jordan sends the budget by Friday.\n- Generated on Copilot: copilotzebra.\n';
 
 /** The answer every Ask turn through this host ends with (the spec looks for it). */
-export const E2E_COPILOT_ASK_TEXT = 'Joe sends the budget by Friday. Answered on Copilot: copilotyak.';
+export const E2E_COPILOT_ASK_TEXT = 'Jordan sends the budget by Friday. Answered on Copilot: copilotyak.';
 
 /** How long the fake download and the fake sign-in take, so the spec can see their states. */
 const DOWNLOAD_MS = 4_000;

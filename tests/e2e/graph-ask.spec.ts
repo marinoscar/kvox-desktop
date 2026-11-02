@@ -27,12 +27,12 @@ import { QUESTIONS, scriptedModel } from '../support/scripted-model';
 //   proposal commit by themselves (`review.autoCommitSafeRows`, on by default,
 //   marinoscar/kvox#779), so the test turns that preference off first, through
 //   `PATCH /api/user-settings` as the Knowledge graph settings page does.)
-//     "What are the action items from Joe?"            search -> list_commitments
-//     "What meetings have we had with Jenny's boss?"   search -> neighbors(REPORTS_TO) -> timeline
+//     "What are the action items from Jordan?"         search -> list_commitments
+//     "What meetings have we had with Jamie's boss?"   search -> neighbors(REPORTS_TO) -> timeline
 //   -> each answer names the right commitment / meeting and cites it.
 //
-// Then the manual edit: no meeting says whom Priya Shah reports to, so the third
-// question has no answer until "Set manager" on her entity page says Mark Chen.
+// Then the manual edit: no meeting says whom Quinn Testcase reports to, so the third
+// question has no answer until "Set manager" on her entity page says Riley Demo.
 //
 // Also checked: every meeting has its ATTENDED rows from the named speakers (the
 // D4 leftover); the explorer's G6 canvas mounts with nodes and its zoom-in and
@@ -46,9 +46,9 @@ import { QUESTIONS, scriptedModel } from '../support/scripted-model';
 const ROOT = resolve(__dirname, '..', '..');
 const FIXTURES = join(ROOT, 'tests', 'fixtures', 'graph');
 const MEETINGS = [
-  { file: 'g01-weekly-sync.transcript.json', title: 'Weekly sync with Maria Lopez', speakers: ['Jenny Kim', 'Joe Park', 'Maria Lopez'] },
-  { file: 'g02-standup.transcript.json', title: 'Joe and Jenny standup', speakers: ['Jenny Kim', 'Joe Park'] },
-  { file: 'g03-platform-review.transcript.json', title: 'Data platform review with Mark Chen', speakers: ['Mark Chen', 'Priya Shah'] },
+  { file: 'g01-weekly-sync.transcript.json', title: 'Weekly sync with Morgan Placeholder', speakers: ['Jamie Fixture', 'Jordan Sample', 'Morgan Placeholder'] },
+  { file: 'g02-standup.transcript.json', title: 'Jordan and Jamie standup', speakers: ['Jamie Fixture', 'Jordan Sample'] },
+  { file: 'g03-platform-review.transcript.json', title: 'Data platform review with Riley Demo', speakers: ['Quinn Testcase', 'Riley Demo'] },
 ] as const;
 const userDataDir = mkdtempSync(join(tmpdir(), 'kvox-e2e-graph-'));
 const requests: string[] = [];
@@ -290,7 +290,7 @@ test('the reference questions are answered with citations, and a manager set by 
 
   // ---- The graph: one entity per person, a Meeting per transcript ----------
   const persons = await api<{ items: Array<{ id: string; label: string }> }>(page, '/graph/entities?type=Person');
-  expect(persons.items.map((e) => e.label).sort()).toEqual(['Jenny Kim', 'Joe Park', 'Maria Lopez', 'Mark Chen', 'Priya Shah']);
+  expect(persons.items.map((e) => e.label).sort()).toEqual(['Jamie Fixture', 'Jordan Sample', 'Morgan Placeholder', 'Quinn Testcase', 'Riley Demo']);
   const person = new Map(persons.items.map((e) => [e.label, e.id]));
   const meetings = await api<{ items: Array<{ id: string; label: string }> }>(page, '/graph/entities?type=Meeting');
   expect(meetings.items.map((e) => e.label).sort()).toEqual(MEETINGS.map((m) => m.title).sort());
@@ -323,7 +323,7 @@ test('the reference questions are answered with citations, and a manager set by 
   results.attended = attended;
   for (const meeting of MEETINGS) expect(attended[meeting.title], `ATTENDED of "${meeting.title}"`).toEqual([...meeting.speakers]);
 
-  // ---- "What are the action items from Joe?" -------------------------------
+  // ---- "What are the action items from Jordan?" -------------------------------
   const actionItems = await ask(page, QUESTIONS.actionItems);
   expect(actionItems.status).toBe('complete');
   expect(actionItems.toolCalls.map((c) => c.name)).toEqual(['search', 'list_commitments']);
@@ -332,46 +332,46 @@ test('the reference questions are answered with citations, and a manager set by 
   expect(actionItems.content).not.toContain('vendor review');
   expect(actionItems.citations.length).toBeGreaterThan(0);
   expect(actionItems.citations.every((c) => c.valid)).toBe(true);
-  expect(actionItems.citations.find((c) => c.kind === 'entity')?.label).toBe('Joe Park');
+  expect(actionItems.citations.find((c) => c.kind === 'entity')?.label).toBe('Jordan Sample');
   expect(actionItems.citations.filter((c) => c.kind === 'evidence').map((c) => c.label)).toEqual([MEETINGS[0].title]);
   // The answer streamed into the page (no reload), its citation chip naming the meeting.
   const thread = page.getByRole('region', { name: 'Conversation' });
   await expect(thread.getByText('Send the budget draft').first()).toBeVisible();
   await expect(thread.getByRole('button', { name: `Source 1: ${MEETINGS[0].title}` })).toBeVisible();
 
-  // ---- "What meetings have we had with Jenny's boss?" ----------------------
+  // ---- "What meetings have we had with Jamie's boss?" ----------------------
   const bossMeetings = await ask(page, QUESTIONS.bossMeetings);
   expect(bossMeetings.status).toBe('complete');
   expect(bossMeetings.toolCalls.map((c) => c.name)).toEqual(['search', 'neighbors', 'timeline']);
   expect(bossMeetings.toolCalls.every((c) => c.error === null)).toBe(true);
-  expect(bossMeetings.toolCalls[2].summary).toContain('Maria Lopez');
-  expect(bossMeetings.content).toContain('Maria Lopez');
+  expect(bossMeetings.toolCalls[2].summary).toContain('Morgan Placeholder');
+  expect(bossMeetings.content).toContain('Morgan Placeholder');
   expect(bossMeetings.content).toContain(MEETINGS[0].title);
   expect(bossMeetings.content).not.toContain(MEETINGS[1].title);
   expect(bossMeetings.citations.every((c) => c.valid)).toBe(true);
   expect(bossMeetings.citations.some((c) => c.via?.kind === 'relation')).toBe(true);
   expect(bossMeetings.citations.filter((c) => c.kind === 'evidence').every((c) => c.label === MEETINGS[0].title)).toBe(true);
 
-  // ---- No meeting says whom Priya reports to --------------------------------
+  // ---- No meeting says whom Quinn reports to --------------------------------
   const before = await ask(page, QUESTIONS.manualBossMeetings, `${QUESTIONS.manualBossMeetings} (before the manual edit)`);
   expect(before.content).not.toContain(MEETINGS[2].title);
 
   // ---- Set her manager by hand on her entity page ---------------------------
-  await page.goto(page.url().split('#')[0] + `#/graph/entities/${person.get('Priya Shah')}`);
-  await expect(page.getByRole('heading', { name: 'Priya Shah', level: 1 })).toBeVisible();
+  await page.goto(page.url().split('#')[0] + `#/graph/entities/${person.get('Quinn Testcase')}`);
+  await expect(page.getByRole('heading', { name: 'Quinn Testcase', level: 1 })).toBeVisible();
   await page.getByRole('button', { name: 'Set manager' }).click();
   const dialog = page.getByRole('dialog', { name: 'Set manager' });
-  await dialog.getByRole('combobox', { name: 'Manager' }).fill('Mark');
-  await page.getByRole('option', { name: /Mark Chen/ }).click();
+  await dialog.getByRole('combobox', { name: 'Manager' }).fill('Riley');
+  await page.getByRole('option', { name: /Riley Demo/ }).click();
   await dialog.getByRole('button', { name: 'Save' }).click();
   await expect(page.getByText('Saved.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Remove Reports to Mark Chen' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Remove Reports to Riley Demo' })).toBeVisible();
 
   const manual = await ask(page, QUESTIONS.manualBossMeetings);
   expect(manual.status).toBe('complete');
   expect(manual.toolCalls.map((c) => c.name)).toEqual(['search', 'neighbors', 'timeline']);
   expect(manual.toolCalls.every((c) => c.error === null)).toBe(true);
-  expect(manual.content).toContain('Mark Chen');
+  expect(manual.content).toContain('Riley Demo');
   expect(manual.content).toContain(MEETINGS[2].title);
   expect(manual.citations.every((c) => c.valid)).toBe(true);
   expect(manual.citations.some((c) => c.via?.kind === 'relation')).toBe(true);
@@ -396,10 +396,10 @@ test('the reference questions are answered with citations, and a manager set by 
     form.append('file', new Blob([turtle], { type: 'text/turtle' }), 'graph.ttl');
     const response = await fetch(`${baseUrl}/api/graph/imports`, { method: 'POST', headers: auth, body: form });
     const body = await response.json();
-    return { status: response.status, proposalId: (body.data ?? body).proposalId as string, mentionsMark: turtle.includes('Mark Chen') };
+    return { status: response.status, proposalId: (body.data ?? body).proposalId as string, mentionsManager: turtle.includes('Riley Demo') };
   }, exported.downloadUrl!);
   expect(imported.status).toBe(202);
-  expect(imported.mentionsMark).toBe(true);
+  expect(imported.mentionsManager).toBe(true);
   const importProposal = await until(
     () => api<{ proposal: { status: string } }>(page, `/graph/proposals/${imported.proposalId}`),
     (p) => p.proposal.status !== 'extracting',

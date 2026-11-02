@@ -1,4 +1,4 @@
 # Stand-up
 
-Joe will send the budget by Friday.
-Jenny reviews the plan.
+Jordan will send the budget by Friday.
+Jamie reviews the plan.
