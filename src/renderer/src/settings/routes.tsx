@@ -1,6 +1,7 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
 import { Route } from 'react-router-dom';
 
+import { kvoxGraphRoutes } from '@marinoscar/kvox-web/graph/ui';
 import { SettingsHub } from '@marinoscar/platform-web/settings/ui';
 
 import { SettingsPageFrame } from './SettingsPageFrame';
@@ -10,6 +11,7 @@ import {
   DESKTOP_SETTINGS_SECTIONS,
   DESKTOP_SETTINGS_SUBTITLE,
   DESKTOP_SETTINGS_TITLE,
+  KNOWLEDGE_GRAPH_SETTINGS_PATH,
 } from './sections';
 
 // =============================================================================
@@ -34,6 +36,9 @@ const NoteTemplatesPage = lazy(() => import('./NoteTemplatesPage').then((module)
 const DataPrivacyPage = lazy(() => import('./DataPrivacyCard').then((module) => ({ default: module.DataPrivacyCard })));
 const UpdatesPage = lazy(() => import('./UpdatesCard').then((module) => ({ default: module.UpdatesCard })));
 const LocalSearchPage = lazy(() => import('./LocalSearchCard').then((module) => ({ default: module.LocalSearchCard })));
+// The graph slice's own lazy page (UserKnowledgeGraphPage), taken from its route data.
+const KnowledgeGraphPage = kvoxGraphRoutes.find((route) => route.path === KNOWLEDGE_GRAPH_SETTINGS_PATH)?.Component;
+if (!KnowledgeGraphPage) throw new Error('The graph slice declares no Knowledge graph settings route');
 
 /** The page of each card. Append to the end, like the registry. */
 export const desktopSettingsRoutes: readonly DesktopSettingsRoute[] = [
@@ -43,6 +48,7 @@ export const desktopSettingsRoutes: readonly DesktopSettingsRoute[] = [
   { path: '/settings/data', Component: DataPrivacyPage },
   { path: '/settings/updates', Component: UpdatesPage },
   { path: '/settings/search', Component: LocalSearchPage },
+  { path: KNOWLEDGE_GRAPH_SETTINGS_PATH, Component: KnowledgeGraphPage, ownHeading: true },
 ];
 
 /** `/settings`: the registry's hub. */
