@@ -209,7 +209,8 @@ Host duties Desktop carries for the graph:
 
 - The system `ai` namespace declares `graphEnabled`, **on** by default here, and `reasoningEffort`. Settings > **Connected knowledge** switches it (`GET`/`PATCH /api/desktop/knowledge`). Off, KVox makes no graph or Ask call to the AI provider (the graph's AI routes answer 409 `graph_disabled`), hides Knowledge, Review and Ask, and keeps the graph you already have. The window mirrors the switch in `KvoxWebHost.features()`.
 - An hourly housekeeping timer (`src/server/housekeeping.ts`) calls the four enqueuers, because every slice runs with `schedules: false`.
-- The RDF peers (`n3`, `jsonld`, `rdf-validate-shacl`) and the `graphology` layout peers are installed.
+- `GET`/`PATCH /api/user-settings` (`src/server/user-settings.controller.ts`) serves the per-user settings document kvox-web reads and writes the `graph` preferences through (the Knowledge graph settings page, "You in the graph", the explorer's saved lenses), with `If-Match` carrying its version. On the web it is the platform's route; here it is `user_settings` through KVOX_SETTINGS, merged by kvox-api's `mergeGraphPreferences`. The preference `review.autoCommitSafeRows` (on by default since kvox 0.1.0-next.23) commits a proposal's confident rows without a visit to the review sheet.
+- The RDF peers (`n3`, `jsonld`, `rdf-validate-shacl`) and the `graphology` layout peers (the server's) are installed, and `@antv/g6`, the explorer canvas's renderer peer (Canvas, main thread, no worker, so the window's CSP is unchanged).
 - The SHACL validation of a graph import runs in a utility process (`src/main/shacl-validate.ts`, wired through `shacl.run`). The RunAsNode fuse is off, so the package's default of spawning the binary as Node cannot work.
 
 ## Settings

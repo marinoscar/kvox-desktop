@@ -21,6 +21,7 @@ import { LOCAL_FS_OBJECT_STORE, LocalStoreController, LocalUploadsController } f
 import type { LocalFsObjectStore } from './ports/local-fs-object-store.js';
 import type { EgressGuard } from './egress-guard.js';
 import { StorageObjectsController } from './storage-objects.controller.js';
+import { UserSettingsController } from './user-settings.controller.js';
 
 // =============================================================================
 // The application module of KVox Desktop
@@ -54,6 +55,10 @@ import { StorageObjectsController } from './storage-objects.controller.js';
 //                        the package's default spawn of the binary cannot work)
 //   AskModule            conversations and the `ask.respond` tool loop
 //   (marinoscar/kvox#586)
+//
+// `/api/user-settings` (`user-settings.controller.ts`) is the per-user settings
+// document kvox-web reads and writes the `graph` preferences through (the
+// platform's route on the web edition), over KVOX_SETTINGS.
 //
 // `schedules: false` everywhere: the four housekeeping enqueuers are called on
 // the host's own timer (`housekeeping.ts`). The ports module comes first (it is
@@ -123,6 +128,7 @@ export function createDesktopModule(options: DesktopModuleOptions): DynamicModul
       DesktopAiController,
       DesktopDataController,
       DesktopKnowledgeController,
+      UserSettingsController,
     ],
     providers: [
       { provide: LOCAL_FS_OBJECT_STORE, useValue: options.objectStore },
