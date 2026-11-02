@@ -131,6 +131,13 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     log: options.log,
   });
   if (restored) await discardPreviousData(folder);
+  if (database.legacyDataDir) {
+    // The one notice of the switch to stable migration names (legacy-database.ts); the log line is startDatabase's.
+    options.showNotification(
+      'KVox Desktop',
+      `Your knowledge base was reset for this update. The previous database is kept at ${database.legacyDataDir}.`,
+    );
+  }
   const prisma = createPrismaClient(database);
   const timings: Record<string, number> = { ...database.timings };
 

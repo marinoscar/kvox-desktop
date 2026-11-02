@@ -12,6 +12,8 @@ import { PGLiteSocketServer } from '@electric-sql/pglite-socket';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 
+import { moveDatabaseAside, renamedDomainMigrations } from './legacy-database.js';
+
 // =============================================================================
 // The embedded PostgreSQL of KVox Desktop (marinoscar/kvox#582)
 // =============================================================================
@@ -28,6 +30,9 @@ import { PrismaClient } from '@prisma/client';
 //   1. open PGlite with vector, pg_trgm and uuid_ossp (the first platform
 //      migration creates "uuid-ossp"), then create `vector` and `pg_trgm`
 //      (the superuser's job, never a migration's; the only SQL in this repo);
+//   1b. a database created under the old domain migration names (rc.14 and
+//      earlier) is closed, moved aside to `db.legacy-<timestamp>` (kept) and
+//      replaced by a new one (`legacy-database.ts`);
 //   2. `prisma migrate deploy` (platform history, then the domain history);
 //   3. `kvox-db check --database`, only when step 2 applied something (the
 //      first launch and every upgrade), because it costs a process start.
@@ -61,6 +66,12 @@ export interface DesktopDatabase {
   readonly url: string;
   /** How many migrations this launch applied. */
   readonly applied: number;
+  /**
+   * Where the database folder was moved when it was created under the old
+   * migration names (rc.14 and earlier) and could not be migrated; this launch
+   * started a new database. Absent otherwise.
+   */
+  readonly legacyDataDir?: string;
   /** Milliseconds per step, for the cold-start report. */
   readonly timings: Record<string, number>;
   /** A gzip tarball of the data directory after a checkpoint (`PGlite.dumpDataDir`), for a backup. */
@@ -176,6 +187,22 @@ function freePort(): Promise<number> {
 /** The extensions every open of the data directory loads (a restore loads the same). */
 export const PGLITE_EXTENSIONS = { vector, pg_trgm, uuid_ossp };
 
+/** The migration directory names the app ships (`prisma/migrations`); empty when the folder cannot be read. */
+export function installedMigrations(appRoot: string): string[] {
+  const dir = join(workingDirectoryOf(appRoot), 'prisma', 'migrations');
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+}
+
+/** Every `migration_name` an open database recorded, whatever its state; empty for a new database. */
+export async function recordedMigrations(db: PGlite): Promise<string[]> {
+  const table = await db.query<{ name: string | null }>(`SELECT to_regclass('public._prisma_migrations')::text AS name`);
+  if (!table.rows[0]?.name) return [];
+  return (await db.query<{ name: string }>('SELECT migration_name AS name FROM _prisma_migrations')).rows.map((row) => row.name);
+}
+
 /** Opens PGlite, applies every migration and, after a change, proves the domain objects exist. */
 export async function startDatabase(options: DatabaseOptions): Promise<DesktopDatabase> {
   const timings: Record<string, number> = {};
@@ -188,10 +215,24 @@ export async function startDatabase(options: DatabaseOptions): Promise<DesktopDa
     }
   };
 
-  mkdirSync(options.dataDir, { recursive: true });
-  const db = await time('pgliteOpen', () =>
-    PGlite.create({ dataDir: options.dataDir, extensions: PGLITE_EXTENSIONS }),
-  );
+  const open = async (): Promise<PGlite> => {
+    mkdirSync(options.dataDir, { recursive: true });
+    return PGlite.create({ dataDir: options.dataDir, extensions: PGLITE_EXTENSIONS });
+  };
+  let db = await time('pgliteOpen', open);
+
+  // BEFORE `migrate deploy`: a database from the old naming would stop it with P3018.
+  let legacyDataDir: string | undefined;
+  const renamed = renamedDomainMigrations(await recordedMigrations(db), installedMigrations(options.appRoot));
+  if (renamed.length > 0) {
+    await db.close();
+    legacyDataDir = await moveDatabaseAside(options.dataDir);
+    options.log(
+      `database: created by KVox Desktop 0.1.0-rc.14 or earlier (old migration names, such as ${renamed[0]}); ` +
+        `kept it at ${legacyDataDir} and started a new database`,
+    );
+    db = await time('pgliteOpen', open);
+  }
   await db.exec('CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;');
 
   const port = await freePort();
@@ -239,7 +280,7 @@ export async function startDatabase(options: DatabaseOptions): Promise<DesktopDa
     } else {
       options.log('database: no pending migrations');
     }
-    return { url, applied, timings, dump, close };
+    return { url, applied, timings, dump, close, ...(legacyDataDir ? { legacyDataDir } : {}) };
   } catch (error) {
     await close().catch(() => undefined);
     throw error;
