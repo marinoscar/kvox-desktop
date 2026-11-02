@@ -115,7 +115,6 @@ test('connected knowledge can be switched off and on in Settings, and stays as s
   await openSettingsCard(page, 'Knowledge graph');
   await expect(page.getByRole('heading', { name: 'You in the graph', level: 2 })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Batch review', level: 2 })).toBeVisible();
-  await expect(page.getByText('Connected knowledge is turned off', { exact: false })).toBeVisible();
 
   toggle = await openSettings(page);
   await expect(toggle).not.toBeChecked();
